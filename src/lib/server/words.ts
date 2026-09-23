@@ -230,21 +230,7 @@ CREATE TABLE IF NOT EXISTS "review_logs" (
   CONSTRAINT "review_logs_word_id_words_id_fk" FOREIGN KEY ("word_id") REFERENCES "public"."words"("id") ON DELETE cascade
 );
 CREATE INDEX IF NOT EXISTS "review_logs_day_idx" ON "review_logs" USING btree ("day");
-CREATE INDEX IF NOT EXISTS "review_logs_word_idx" ON "review_logs" USING btree ("word_id");
-CREATE TABLE IF NOT EXISTS "sync_rooms" (
-  "code" varchar(5) PRIMARY KEY NOT NULL,
-  "host_token" text NOT NULL,
-  "guest_token" text,
-  "host_name" text NOT NULL,
-  "guest_name" text,
-  "offer" jsonb,
-  "answer" jsonb,
-  "host_candidates" jsonb DEFAULT '[]'::jsonb NOT NULL,
-  "guest_candidates" jsonb DEFAULT '[]'::jsonb NOT NULL,
-  "expires_at" timestamp with time zone NOT NULL,
-  "created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
-CREATE INDEX IF NOT EXISTS "sync_rooms_expiry_idx" ON "sync_rooms" USING btree ("expires_at");`;
+CREATE INDEX IF NOT EXISTS "review_logs_word_idx" ON "review_logs" USING btree ("word_id");`;
 
 let schemaReady: Promise<void> | null = null;
 

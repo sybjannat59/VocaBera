@@ -7,10 +7,10 @@ A mobile-first, installable (PWA) vocabulary app for English learners with Bangl
 - **AI Auto-fill** — Wiktionary, Datamuse, Tatoeba and MyMemory research, refined by AI
 - **Smart quiz** (11 adaptive question types), **Match pairs**, **3D flashcards** with spaced repetition
 - **Progress** — charts, study calendar heatmap, forecasts and 20 achievements; daily recap popup
-- **Excel (.xlsx) / CSV / JSON import & export**, **live sync** between two devices over Wi‑Fi (WebRTC)
+- **Excel (.xlsx) / CSV / JSON import & export**, **live sync** between devices over Wi‑Fi (PeerJS peer-to-peer WebRTC)
 - **Works offline** — installable PWA; all words and study progress stay safe in your browser
 
-**Tech:** Next.js 16 (App Router) · React 19 · Tailwind CSS 4 · Browser IndexedDB · Drizzle ORM
+**Tech:** Next.js 16 (App Router) · React 19 · Tailwind CSS 4 · Browser IndexedDB · PeerJS (WebRTC) · Drizzle ORM
 
 ---
 
@@ -57,25 +57,38 @@ AI Auto-fill works out of the box without any API key using free public dictiona
 
 ---
 
-## Sync between your devices over Wi‑Fi
+## Sync between your devices over Wi‑Fi (PeerJS peer-to-peer)
 
-Open **Manage → Sync**. Two ways to pair, both over your home Wi‑Fi router:
+Open **Manage → Sync** on both devices, with both connected to the same Wi‑Fi router.
 
-**1. QR pairing (recommended — no server involved at all)**
-1. On the device that has your words, tap **QR over Wi‑Fi → Show a QR code**.
-2. On the other device tap **QR over Wi‑Fi**, then scan it (or paste the copied code).
-3. That device shows a **reply code** — scan that back on the first device.
-4. Both screens show **Live sync active** and each other's device name.
+1. On the device that has your words, tap **Create room**. You get a 5-character code (e.g. `K7M2P`, tap to copy) and a QR code.
+2. On the other device, type the code and tap **Connect**, tap **Scan QR code**, or simply scan the QR with the phone's camera app (it opens VocaBera and joins automatically).
+3. Both screens show **Live sync active** with the paired device's name and the route in use. **Same Wi‑Fi · direct** means the data never leaves your home network.
 
-The whole handshake travels inside the QR codes, so nothing is stored on a server. A code stays valid for 45 minutes, and pairing cannot expire halfway. Scanning the code with a normal camera app opens VocaBera and pairs automatically.
+**How it works:** the free [PeerJS](https://peerjs.com) cloud service only introduces the two devices (a few KB of handshake). All vocabulary data then flows directly between the devices over an encrypted WebRTC data channel. Nothing is stored on a server, so rooms can't "expire", and it works on Vercel with zero setup.
 
-**2. Room code**
-1. On one device tap **Room code → Create room** to get a 5-character code (tap it to copy).
-2. On the other device type that code and tap **Connect**.
+- **Auto-sync** pushes new words, edits, favorites, learning progress and deletions automatically. Devices compare content digests, so data never bounces back and forth. **Send mine** / **Get latest** force a full transfer.
+- **Smart merge:** the newest edit wins, the most recent review wins, deletions propagate, and quiz history is merged without duplicates. Daily activity is tracked per device and added together, so streaks and XP include both devices.
+- **Self-healing:** heartbeats detect dropped connections and reconnect automatically, and reloading either page resumes the session. The screen stays awake while a session is open.
+- **More than two devices:** on the host, tap **Add another device** to connect a tablet as well.
+- **Local network only** (toggle): never use an internet relay; both devices must reach each other directly over the Wi‑Fi.
+- **End session** closes the connection on both devices.
 
-Rooms now last 30 minutes, refresh themselves on every poll, and if a hosting server restarts mid-pairing the app silently rebuilds the room instead of reporting "expired".
+**Trouble connecting?** Use the same Wi‑Fi network (not a guest network) and turn off VPNs. If it keeps reconnecting, disable "AP/client isolation" on the router, or leave **Local network only** off so the encrypted relay can help.
 
-Once paired: **Auto-sync** pushes changes automatically, or use **Send mine** / **Get latest**. **End session** closes the connection. Keep both screens open while syncing — reloading the page ends the session.
+### Optional: self-hosted PeerServer or TURN relay
+
+VocaBera uses the public PeerJS cloud by default. To use your own [PeerServer](https://github.com/peers/peerjs-server), add these in Vercel → **Settings → Environment Variables**, then redeploy:
+
+| Variable | Example |
+| --- | --- |
+| `NEXT_PUBLIC_PEER_HOST` | `peer.example.com` |
+| `NEXT_PUBLIC_PEER_PORT` | `443` |
+| `NEXT_PUBLIC_PEER_PATH` | `/` |
+| `NEXT_PUBLIC_PEER_KEY` | `peerjs` |
+| `NEXT_PUBLIC_PEER_SECURE` | `true` |
+| `NEXT_PUBLIC_TURN_URL` | `turn:turn.example.com:3478` (optional extra relay) |
+| `NEXT_PUBLIC_TURN_USERNAME` / `NEXT_PUBLIC_TURN_CREDENTIAL` | relay credentials |
 
 ## Install as a PWA (Mobile & Desktop)
 

@@ -5,6 +5,7 @@ import { BookOpen, Brain, ChartColumn, CirclePlus, Flame, House, Layers, Setting
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { useLiveSync } from "@/lib/live-sync";
 import { useVocabStats } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { WordSheet } from "./word-bits";
@@ -28,6 +29,9 @@ function Header() {
   const pathname = usePathname();
   const stats = useVocabStats();
   const manageActive = pathname.startsWith("/manage");
+  const sync = useLiveSync();
+  const syncLive = sync.phase === "connected";
+  const syncBusy = sync.phase === "waiting" || sync.phase === "connecting" || sync.phase === "reconnecting";
   return (
     <header className="sticky top-0 z-40">
       <div className="glass !rounded-none !border-x-0 !border-t-0 pt-[env(safe-area-inset-top)]">
@@ -58,14 +62,20 @@ function Header() {
             </Link>
             <Link
               href="/manage"
-              aria-label="Manage"
-              title="Manage"
+              aria-label={syncLive ? "Manage · live sync active" : "Manage"}
+              title={syncLive ? "Manage · live sync active" : "Manage"}
               className={cn(
-                "grid size-10 place-items-center rounded-full transition active:scale-90",
+                "relative grid size-10 place-items-center rounded-full transition active:scale-90",
                 manageActive ? "brand-gradient text-white shadow-lg shadow-brand-500/30" : "surface text-fg/80 hover:text-fg",
               )}
             >
               <Settings2 className="size-[19px]" />
+              {(syncLive || syncBusy) && (
+                <span className="absolute -right-0.5 -top-0.5 flex size-3">
+                  {syncLive && <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-70" />}
+                  <span className={cn("relative inline-flex size-3 rounded-full ring-2 ring-[var(--bg)]", syncLive ? "bg-emerald-500" : "bg-amber-400")} />
+                </span>
+              )}
             </Link>
           </div>
         </div>

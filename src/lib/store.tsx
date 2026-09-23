@@ -77,6 +77,8 @@ interface VocabCtx {
     mode: "merge" | "replace",
   ) => Promise<(BackupImportResult & { snapshot: BootstrapData }) | null>;
   dataAction: (action: "seed" | "reset-progress" | "delete-all") => Promise<boolean>;
+  /** Replace the in-memory data after an external change (e.g. a device sync merge). */
+  applyData: (data: BootstrapData) => void;
   pendingSync: number;
 }
 
@@ -410,6 +412,7 @@ export function VocabProvider({ children }: { children: ReactNode }) {
       recordReviews,
       importBackup,
       dataAction,
+      applyData: applyBootstrap,
       pendingSync: 0,
     }),
     [
@@ -429,6 +432,7 @@ export function VocabProvider({ children }: { children: ReactNode }) {
       recordReviews,
       importBackup,
       dataAction,
+      applyBootstrap,
     ],
   );
 

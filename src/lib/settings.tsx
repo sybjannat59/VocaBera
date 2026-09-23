@@ -32,6 +32,8 @@ export interface Settings {
   matchRounds: number;
   matchMeaning: "bangla" | "definition";
   autoSync: boolean;
+  /** Only allow direct connections inside the local network (no internet relay). */
+  syncLocalOnly: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -70,6 +72,7 @@ export const DEFAULT_SETTINGS: Settings = {
   matchRounds: 3,
   matchMeaning: "bangla",
   autoSync: true,
+  syncLocalOnly: false,
 };
 
 export const ACCENTS: { id: Accent; label: string; from: string; to: string }[] = [

@@ -8,7 +8,6 @@ import {
   serial,
   text,
   timestamp,
-  varchar,
 } from "drizzle-orm/pg-core";
 
 export const words = pgTable(
@@ -85,25 +84,6 @@ export const reviewLogs = pgTable(
   (t) => [index("review_logs_day_idx").on(t.day), index("review_logs_word_idx").on(t.wordId)],
 );
 
-export const syncRooms = pgTable(
-  "sync_rooms",
-  {
-    code: varchar("code", { length: 5 }).primaryKey(),
-    hostToken: text("host_token").notNull(),
-    guestToken: text("guest_token"),
-    hostName: text("host_name").notNull(),
-    guestName: text("guest_name"),
-    offer: jsonb("offer").$type<Record<string, unknown> | null>().default(null),
-    answer: jsonb("answer").$type<Record<string, unknown> | null>().default(null),
-    hostCandidates: jsonb("host_candidates").$type<Record<string, unknown>[]>().notNull().default(sql`'[]'::jsonb`),
-    guestCandidates: jsonb("guest_candidates").$type<Record<string, unknown>[]>().notNull().default(sql`'[]'::jsonb`),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("sync_rooms_expiry_idx").on(t.expiresAt)],
-);
-
-export type SyncRoomRow = typeof syncRooms.$inferSelect;
 export type ReviewLogRow = typeof reviewLogs.$inferSelect;
 export type WordRow = typeof words.$inferSelect;
 export type NewWordRow = typeof words.$inferInsert;

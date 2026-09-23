@@ -25,6 +25,8 @@ export interface Word {
   timesWrong: number;
   lastReviewedAt: string | null;
   nextReviewAt: string | null;
+  /** Set when learning progress is reset, so the reset wins over older progress during device sync. */
+  progressResetAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
