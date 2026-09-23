@@ -2,61 +2,52 @@
 
 A mobile-first, installable (PWA) vocabulary app for English learners with Bangla meanings.
 
-- **Words** — add words with Bangla meaning, definition, synonyms, antonyms, example, prefix / root / suffix, mnemonic
+- **Local/Browser Database** — 100% browser-based database (IndexedDB); works offline without requiring any server database setup!
+- **Words** — add words with Bangla meaning, definition, synonyms, antonyms, example sentence, prefix, root, suffix, mnemonic
 - **AI Auto-fill** — Wiktionary, Datamuse, Tatoeba and MyMemory research, refined by AI
 - **Smart quiz** (11 adaptive question types), **Match pairs**, **3D flashcards** with spaced repetition
-- **Progress** — charts, study calendar, forecasts and 20 achievements; daily recap popup
-- **Excel / CSV / JSON import & export**, **live sync** between two devices over Wi‑Fi (WebRTC)
-- **Works offline** — installable app; study progress made offline syncs automatically
+- **Progress** — charts, study calendar heatmap, forecasts and 20 achievements; daily recap popup
+- **Excel (.xlsx) / CSV / JSON import & export**, **live sync** between two devices over Wi‑Fi (WebRTC)
+- **Works offline** — installable PWA; all words and study progress stay safe in your browser
 
-**Tech:** Next.js 16 (App Router) · React 19 · Tailwind CSS 4 · PostgreSQL + Drizzle ORM
+**Tech:** Next.js 16 (App Router) · React 19 · Tailwind CSS 4 · Browser IndexedDB · Drizzle ORM
 
 ---
 
-## Deploy to Vercel (upload files to GitHub manually)
+## Deploy to Vercel (Zero Database Setup Required!)
 
-You need a free **GitHub** account and a free **Vercel** account (sign up with GitHub). The database is free too (Neon, created inside Vercel in step 4).
+VocaBera uses a **local/browser-based database (IndexedDB)**. You can deploy it to Vercel completely free with **ZERO environment variables**!
 
 ### 1. Get the files
 
-Download **`vocabera-source.zip`** and extract it. Inside you'll see the folders `src` and `public` and files such as `package.json`.
+Download **`vocabera-source.zip`** and extract it on your computer. Inside you'll see `src`, `public`, `package.json`, etc.
 
-Never upload `node_modules`, `.next` or `.env` — they aren't in the zip.
+Never upload `node_modules`, `.next` or `.env` — they are already excluded.
 
 ### 2. Upload to GitHub
 
 1. Go to **github.com → + (top right) → New repository**, name it `vocabera`, choose Public or Private, and click **Create repository**.
-2. On the new, empty repository page click **“uploading an existing file”**.
-3. Open the extracted folder, select **everything inside it** (Ctrl + A / ⌘ + A) and **drag it into the browser**. Folders keep their structure. Use **Chrome or Edge** (Safari can't drag folders).
-4. Wait until all files are listed (93 files — GitHub allows 100 per upload), then click **Commit changes**.
+2. On the new repository page click **“uploading an existing file”**.
+3. Open the extracted folder, select **all files and folders inside it** (Ctrl + A / ⌘ + A) and **drag them into the browser window**. Folders keep their structure. Use **Chrome or Edge** (Safari cannot drag folders).
+4. Wait until all files are listed, then click **Commit changes**.
 
-✅ Check: the repository root must show `package.json`, `src` and `public` directly — not one folder that contains them. (Hidden files like `.gitignore` are optional.)
+✅ Check: the repository root must show `package.json`, `src` and `public` directly — not inside a single parent folder.
 
-### 3. Import the repository into Vercel
+### 3. Deploy on Vercel
 
-1. Go to **vercel.com → Add New… → Project** and **Import** the `vocabera` repository. If it isn't listed, click **Adjust GitHub App Permissions** and allow access.
+1. Go to **vercel.com → Add New… → Project** and **Import** the `vocabera` repository.
 2. Framework Preset: **Next.js** (detected automatically). Leave Root Directory as `./` and all build settings as default.
-3. Click **Deploy**. The build succeeds even before the database exists — the site will say the database isn't configured until step 4.
+3. Click **Deploy**.
 
-### 4. Add a free Postgres database (Neon)
+That's it! Your app will build and go live in ~1 minute. Open your deployed URL — your words, quizzes, flashcards, Excel import, and Wi-Fi sync are all immediately functional!
 
-1. In your Vercel project open the **Storage** tab → **Create Database** → **Neon (Serverless Postgres)**.
-2. Choose the region closest to your users (for Bangladesh: **Singapore**) and the **Free** plan, then connect it to the project for all environments. Vercel adds `DATABASE_URL` automatically.
-3. Open **Deployments → ⋯ (latest deployment) → Redeploy**.
+### Optional: Cloud PostgreSQL Mirror
 
-Tables are created automatically on the first visit — there is no migration step.
+If you ever want to mirror your words to a cloud PostgreSQL database, you can connect a free Neon database in Vercel → Storage, which sets `DATABASE_URL`. However, this is **completely optional** — the app operates normally in browser storage without it.
 
-**Tip:** under **Settings → Functions → Function Region**, pick the same region as the database (e.g. Singapore `sin1`) for faster loading.
+### Optional: Custom AI Provider for Auto-fill
 
-**Using Supabase, Railway or another Postgres?** Add `DATABASE_URL` yourself in **Settings → Environment Variables** (use the *pooled* connection string), then redeploy.
-
-### 5. Check that it works
-
-Open `https://<your-app>.vercel.app/api/health` — you should see `{"ok":true}`. Then open the site and load the sample words or add your own.
-
-### Optional: more reliable AI Auto-fill
-
-AI Auto-fill works without any key (free dictionaries + Pollinations AI, which can be slow when busy). For faster, more reliable results, add these in **Settings → Environment Variables**, then redeploy:
+AI Auto-fill works out of the box without any API key using free public dictionaries and Pollinations AI. If you want faster AI responses, add these in Vercel **Settings → Environment Variables**:
 
 | Variable | Groq (free tier) | Google Gemini (free tier) | OpenAI |
 | --- | --- | --- | --- |
@@ -64,43 +55,19 @@ AI Auto-fill works without any key (free dictionaries + Pollinations AI, which c
 | `AI_BASE_URL` | `https://api.groq.com/openai/v1` | `https://generativelanguage.googleapis.com/v1beta/openai` | `https://api.openai.com/v1` |
 | `AI_MODEL` | `llama-3.3-70b-versatile` | `gemini-2.5-flash` | `gpt-4o-mini` |
 
-### Updating the app later
-
-Upload the changed files to the same GitHub repository (**Add file → Upload files**; files with the same path are replaced) and commit. Vercel redeploys automatically, and installed apps show **“A new version is ready → Update”**.
-
 ---
 
-## Install as an app (PWA)
+## Install as a PWA (Mobile & Desktop)
 
-- **Android** (Chrome, Edge, Samsung Internet): tap **Install** on the Home screen banner, or menu **⋮ → Install app**.
-- **iPhone / iPad** (Safari): **Share → Add to Home Screen**.
+- **Android** (Chrome, Edge, Samsung Internet): tap **Install** on the banner, or menu **⋮ → Install app**.
+- **iPhone / iPad** (Safari): tap **Share → Add to Home Screen**.
 - **Windows / Mac** (Chrome, Edge): click the install icon in the address bar.
 
-After the first visit the app opens offline. Quizzes, flashcards and match games work offline and their progress syncs when you reconnect. Adding or editing words, AI Auto-fill and live sync need a connection.
-
-## Environment variables
-
-| Name | Required | Description |
-| --- | --- | --- |
-| `DATABASE_URL` | Yes | PostgreSQL connection string (added automatically by the Vercel + Neon integration) |
-| `AI_API_KEY` | No | Key for any OpenAI-compatible API |
-| `AI_BASE_URL` | No | API base URL (default `https://api.openai.com/v1`) |
-| `AI_MODEL` | No | Model name (default `gpt-4o-mini`) |
+The app works offline. Quizzes, flashcards, match game, and word browsing all run locally in your browser.
 
 ## Run locally
 
 ```bash
 npm install
-cp .env.example .env   # then put your own DATABASE_URL in .env
-npm run dev            # http://localhost:3000
+npm run dev # http://localhost:3000
 ```
-
-## Troubleshooting
-
-- **`/api/health` says “DATABASE_URL is not set”** — add the variable (step 4) and redeploy; environment changes only apply to new deployments.
-- **“Database unreachable”** — check the connection string (hosted databases need `?sslmode=require`). A free Neon database may take a second to wake up, so refresh once.
-- **The repository shows a single folder containing the files** — either re-upload the folder *contents*, or set that folder as **Root Directory** in Vercel → Settings → General.
-- **Build error about missing packages** — make sure `package.json` and `package-lock.json` were uploaded.
-- **Still seeing the old version** — accept the “Update” prompt, or close and reopen the installed app.
-
-Vercel's free Hobby plan is meant for personal, non-commercial projects.
