@@ -175,7 +175,6 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
       channelRef.current?.close();
       pcRef.current?.close();
     };
-    // Read the device name once; do not restart the provider on settings changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -275,7 +274,7 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
         setTimeout(() => updateState({ transferProgress: null }), 900);
       }
     },
-    [activity, sessions, updateState, words],
+    [updateState],
   );
 
   const handleMessage = useCallback(
@@ -360,7 +359,7 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
       dc.onopen = () => {
         updateState({ phase: "connected", error: "", peerName: state.peerName || "Paired device" });
         if (dc.readyState === "open") dc.send(JSON.stringify({ t: "hello", name: localNameRef.current }));
-        // Devices now talk directly — stop polling the signaling server (saves serverless invocations).
+        // Stop polling the signaling server once WebRTC peer connection is established
         pollStopRef.current?.();
         pollStopRef.current = null;
         lastObservedHash.current = storeHash({ words, activity, sessions });
@@ -372,7 +371,7 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
         if (mounted.current && roomRef.current) updateState({ phase: "error", error: "Connection closed. End this session and pair again." });
       };
     },
-    [activity, handleMessage, post, sendSnapshot, sessions, settings.autoSync, state.peerName, updateState, words],
+    [activity, handleMessage, sendSnapshot, sessions, settings.autoSync, state.peerName, updateState, words],
   );
 
   const signalLoop = useCallback(
@@ -382,12 +381,30 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
       let candidateCursor = 0;
       let descriptionSet = false;
       let first = true;
+      let consecutive404s = 0;
+
       const poll = async () => {
         if (stopped || busy || roomRef.current?.code !== room.code) return;
         busy = true;
         try {
           const res = await fetch(`/api/sync/${room.code}?role=${room.role}&token=${encodeURIComponent(room.token)}`, { cache: "no-store" });
-          if (!res.ok) throw new Error(res.status === 404 ? "This sync room expired." : "Lost the room connection.");
+          
+          if (!res.ok) {
+            if (res.status === 404) {
+              consecutive404s++;
+              // Don't kill the room on a single transient 404
+              if (consecutive404s >= 3) {
+                stopped = true;
+                updateState({ phase: "error", error: "This sync room expired. Please create a new room." });
+                return;
+              }
+            } else {
+              consecutive404s = 0;
+            }
+            return;
+          }
+
+          consecutive404s = 0;
           const info = (await res.json()) as {
             hostName?: string;
             guestName?: string | null;
@@ -395,12 +412,14 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
             answer?: RTCSessionDescriptionInit | null;
             remoteCandidates?: RTCIceCandidateInit[];
           };
+
           if (first) {
             updateState({ peerName: room.role === "host" ? info.guestName || "" : info.hostName || "" });
             first = false;
           } else if (info.guestName || info.hostName) {
             updateState({ peerName: room.role === "host" ? info.guestName || state.peerName : info.hostName || state.peerName });
           }
+
           if (room.role === "guest" && info.offer && !descriptionSet) {
             descriptionSet = true;
             updateState({ phase: "connecting", error: "" });
@@ -410,11 +429,13 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
             const local = pc.localDescription;
             if (local) await post(room, "answer", { description: { type: local.type, sdp: local.sdp } });
           }
+
           if (room.role === "host" && info.answer && !descriptionSet) {
             descriptionSet = true;
             updateState({ phase: "connecting", error: "" });
             await pc.setRemoteDescription(info.answer);
           }
+
           const candidates = info.remoteCandidates ?? [];
           if (pc.remoteDescription) {
             while (candidateCursor < candidates.length) {
@@ -427,16 +448,13 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
             }
           }
         } catch (err) {
-          const message = err instanceof Error ? err.message : "Connection lost";
-          if (/expired|lost the room/i.test(message)) {
-            stopped = true;
-            updateState({ phase: "error", error: message });
-          }
+          console.warn("Signal poll transient issue:", err);
         } finally {
           busy = false;
-          if (!stopped && roomRef.current?.code === room.code) setTimeout(poll, 950);
+          if (!stopped && roomRef.current?.code === room.code) setTimeout(poll, 1200);
         }
       };
+
       void poll();
       return () => {
         stopped = true;
@@ -454,8 +472,8 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
       };
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === "connected") updateState({ phase: "connected", error: "" });
-        if (pc.connectionState === "failed") updateState({ phase: "error", error: "Could not establish a direct connection. Check that both devices are on the same Wi‑Fi, then try again." });
-        if (pc.connectionState === "disconnected") updateState({ error: "Connection interrupted — waiting for the peer to reconnect…" });
+        if (pc.connectionState === "failed") updateState({ phase: "error", error: "Could not establish a direct connection. Ensure both devices are connected to the same Wi‑Fi." });
+        if (pc.connectionState === "disconnected") updateState({ error: "Connection interrupted — waiting for peer..." });
       };
       pc.ondatachannel = (event) => attachChannel(event.channel);
       return pc;

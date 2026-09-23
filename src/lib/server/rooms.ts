@@ -29,6 +29,9 @@ if (!globalStore.__vocaberaMemoryRooms) {
 
 const memoryRooms = globalStore.__vocaberaMemoryRooms;
 
+// Standard 30 minutes room lifetime for stable Wi-Fi pairing
+const ROOM_LIFETIME_MS = 30 * 60_000;
+
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const generateRoomCode = () =>
   Array.from(randomBytes(5), (n) => ALPHABET[n & 31]).join("");
@@ -43,7 +46,8 @@ export function cleanDeviceName(v: unknown) {
 function cleanExpired() {
   const now = Date.now();
   for (const [code, r] of memoryRooms.entries()) {
-    if (r.expiresAt.getTime() <= now) {
+    // Grace period: allow 5 minutes buffer after expiresAt
+    if (r.expiresAt.getTime() + 5 * 60_000 <= now) {
       memoryRooms.delete(code);
     }
   }
@@ -52,7 +56,7 @@ function cleanExpired() {
 export async function createSignalingRoom(hostName: string): Promise<{ code: string; token: string }> {
   cleanExpired();
   const secret = generateToken();
-  const expiresAt = new Date(Date.now() + 10 * 60_000);
+  const expiresAt = new Date(Date.now() + ROOM_LIFETIME_MS);
   const now = new Date();
 
   for (let i = 0; i < 10; i++) {
@@ -107,7 +111,7 @@ export async function joinSignalingRoom(
   cleanExpired();
   const code = inviteCode.trim().toUpperCase();
   const secret = generateToken();
-  const refresh = new Date(Date.now() + 10 * 60_000);
+  const refresh = new Date(Date.now() + ROOM_LIFETIME_MS);
 
   // Check memory first
   const memRoom = memoryRooms.get(code);
@@ -234,7 +238,7 @@ export async function updateSignalingRoom(
   if (!room) return { ok: false, error: "This room has expired" };
   if (!valid) return { ok: false, error: "Unauthorized" };
 
-  const refresh = new Date(Date.now() + 10 * 60_000);
+  const refresh = new Date(Date.now() + ROOM_LIFETIME_MS);
   room.expiresAt = refresh;
 
   if (action === "touch") {

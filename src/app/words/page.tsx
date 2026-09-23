@@ -1,6 +1,7 @@
 "use client";
 
-import { BookOpen, CirclePlus, Database, Dices, LayoutGrid, List, Search, SlidersHorizontal, Star, X } from "lucide-react";
+import { BookOpen, CirclePlus, Database, Dices, FileSpreadsheet, LayoutGrid, List, Search, SlidersHorizontal, Star, X } from "lucide-react";
+import { openExcelImport } from "@/components/excel-import";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -176,6 +177,15 @@ function WordsInner() {
                 { value: "grid", label: <span className="sr-only">Grid</span>, icon: LayoutGrid },
               ]}
             />
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={FileSpreadsheet}
+              onClick={openExcelImport}
+              className="hidden sm:inline-flex"
+            >
+              Import Excel
+            </Button>
             <Link href="/add" aria-label="Add word" className="grid size-11 place-items-center rounded-2xl brand-gradient text-white shadow-lg shadow-brand-500/30 transition active:scale-90">
               <CirclePlus className="size-5" />
             </Link>
