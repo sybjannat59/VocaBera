@@ -44,6 +44,7 @@ import { toast } from "sonner";
 import { useConfirm } from "@/components/providers";
 import { openRecap } from "@/components/daily-recap";
 import { SyncPanel } from "@/components/sync-panel";
+import { TtsSettingsCard } from "@/components/tts-settings";
 import { InstallSettingsCard } from "@/components/install-app";
 import { exportWordsExcel, openExcelImport } from "@/components/excel-import";
 import { exportLocalData } from "@/lib/idb";
@@ -188,39 +189,7 @@ function SettingsTab() {
           </Row>
         </Card>
 
-        <Card className="p-4 sm:p-5">
-          <SectionTitle
-            title="Pronunciation"
-            className="!px-0"
-            action={
-              <Button size="sm" variant="soft" icon={Volume2} onClick={() => speak("VocaBera makes vocabulary effortless.")}>
-                Test
-              </Button>
-            }
-          />
-          <Segmented<"en-US" | "en-GB">
-            value={settings.voice}
-            onChange={(v) => update({ voice: v })}
-            options={[
-              { value: "en-US", label: "American" },
-              { value: "en-GB", label: "British" },
-            ]}
-          />
-          <div className="mt-4 flex items-center gap-3 px-1">
-            <span className="text-[13px] font-semibold text-muted">Speed</span>
-            <input
-              type="range"
-              min={0.6}
-              max={1.3}
-              step={0.05}
-              value={settings.speechRate}
-              onChange={(e) => update({ speechRate: Number(e.target.value) })}
-              className="h-2 flex-1 accent-brand-500"
-              aria-label="Speech speed"
-            />
-            <span className="w-10 text-right text-[13px] font-bold tabular-nums">{settings.speechRate.toFixed(2)}×</span>
-          </div>
-        </Card>
+        <TtsSettingsCard />
 
         <Card className="p-4 sm:p-5">
           <SectionTitle title="Keyboard shortcuts" className="!px-0" action={<Keyboard className="size-4 text-muted" />} />

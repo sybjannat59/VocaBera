@@ -96,11 +96,12 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (process.env.NODE_ENV !== "production" || !("serviceWorker" in navigator)) return;
     let interval: ReturnType<typeof setInterval> | undefined;
+    let pendingReload = false;
     const onControllerChange = () => {
-      if (updateRequested.current) window.location.reload();
+      if (pendingReload) window.location.reload();
     };
     const onVisible = () => {
-      if (document.visibilityState === "visible") regRef.current?.update().catch(() => undefined);
+      if (document.visibilityState === "visible" && regRef.current?.active) regRef.current?.update().catch(() => undefined);
     };
     const promptUpdate = (worker: ServiceWorker) => {
       toast("A new version of VocaBera is ready", {
@@ -110,7 +111,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
         action: {
           label: "Update",
           onClick: () => {
-            updateRequested.current = true;
+            pendingReload = true;
             worker.postMessage({ type: "SKIP_WAITING" });
           },
         },
@@ -127,12 +128,32 @@ export function PwaProvider({ children }: { children: ReactNode }) {
       try {
         const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" });
         regRef.current = reg;
+        let pumpId: number | undefined;
+        const pump = () => {
+          pumpId = window.setTimeout(() => {
+            if (document.visibilityState === "visible" && regRef.current?.waiting) {
+              const worker = regRef.current.waiting;
+              if (worker?.state === "installed") {
+                // A tab is waiting on a broken preload. Ask the SW to skip waiting now.
+                pendingReload = true;
+                worker.postMessage({ type: "SKIP_WAITING" });
+              }
+            } else pump();
+          }, 4000) as unknown as number;
+        };
+        pump();
         if (reg.waiting && navigator.serviceWorker.controller) promptUpdate(reg.waiting);
         reg.addEventListener("updatefound", () => {
           const worker = reg.installing;
           worker?.addEventListener("statechange", () => {
             if (worker.state === "installed" && navigator.serviceWorker.controller) promptUpdate(worker);
           });
+        });
+        navigator.serviceWorker.addEventListener("message", (event) => {
+          if (event.data?.type === "SW_ACTIVATED") {
+            clearTimeout(pumpId);
+            setOfflineReady(true);
+          }
         });
         const ready = await navigator.serviceWorker.ready;
         setOfflineReady(true);
@@ -147,7 +168,10 @@ export function PwaProvider({ children }: { children: ReactNode }) {
         } catch {
           /* storage unavailable */
         }
-        interval = setInterval(() => reg.update().catch(() => undefined), 60 * 60 * 1000);
+        interval = setInterval(() => {
+          reg.update().catch(() => undefined);
+          pump();
+        }, 60 * 60 * 1000);
         document.addEventListener("visibilitychange", onVisible);
       } catch (err) {
         console.warn("Service worker registration failed", err);

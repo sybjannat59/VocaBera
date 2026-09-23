@@ -190,13 +190,33 @@ body {
   background: color-mix(in oklab, var(--b-500) 26%, transparent);
 }
 :focus-visible {
-  outline: 2px solid var(--b-500);
+  outline: 2px solid color-mix(in oklab, var(--b-500) 45%, transparent);
   outline-offset: 2px;
+  transition: outline-color 0.15s ease;
 }
 input,
 textarea,
 select {
   font-size: 16px;
+}
+input:focus::placeholder {
+  color: color-mix(in oklab, var(--muted) 50%, transparent);
+}
+.field:focus-within {
+  border-color: var(--b-400);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--b-500) 14%, transparent);
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--b-500) 35%, transparent);
+  outline-offset: 2px;
+}
+input:not(:focus-visible),
+textarea:not(:focus-visible),
+select:not(:focus-visible),
+button:not(:focus-visible) {
+  outline: none;
 }
 @media (min-width: 768px) {
   input,
