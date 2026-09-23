@@ -29,8 +29,9 @@ if (!globalStore.__vocaberaMemoryRooms) {
 
 const memoryRooms = globalStore.__vocaberaMemoryRooms;
 
-// Standard 30 minutes room lifetime for stable Wi-Fi pairing
-const ROOM_LIFETIME_MS = 30 * 60_000;
+/** Rooms stay joinable for 30 minutes, and every poll/update pushes the expiry forward. */
+const ROOM_TTL_MS = 30 * 60_000;
+const ttl = () => new Date(Date.now() + ROOM_TTL_MS);
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const generateRoomCode = () =>
@@ -46,8 +47,7 @@ export function cleanDeviceName(v: unknown) {
 function cleanExpired() {
   const now = Date.now();
   for (const [code, r] of memoryRooms.entries()) {
-    // Grace period: allow 5 minutes buffer after expiresAt
-    if (r.expiresAt.getTime() + 5 * 60_000 <= now) {
+    if (r.expiresAt.getTime() <= now) {
       memoryRooms.delete(code);
     }
   }
@@ -56,7 +56,7 @@ function cleanExpired() {
 export async function createSignalingRoom(hostName: string): Promise<{ code: string; token: string }> {
   cleanExpired();
   const secret = generateToken();
-  const expiresAt = new Date(Date.now() + ROOM_LIFETIME_MS);
+  const expiresAt = ttl();
   const now = new Date();
 
   for (let i = 0; i < 10; i++) {
@@ -111,7 +111,7 @@ export async function joinSignalingRoom(
   cleanExpired();
   const code = inviteCode.trim().toUpperCase();
   const secret = generateToken();
-  const refresh = new Date(Date.now() + ROOM_LIFETIME_MS);
+  const refresh = ttl();
 
   // Check memory first
   const memRoom = memoryRooms.get(code);
@@ -184,6 +184,78 @@ export async function joinSignalingRoom(
   return { success: false, error: "Room not found or expired. Ask the other device for a new code.", status: 404 };
 }
 
+/**
+ * Re-registers a room that the host already created but that vanished
+ * (serverless instances do not share memory). The host's token is preserved,
+ * so an in-flight session keeps working.
+ */
+export async function registerSignalingRoom(input: {
+  code: string;
+  token: string;
+  hostName: string;
+  guestToken?: string | null;
+  guestName?: string | null;
+}): Promise<{ ok: boolean; error?: string }> {
+  cleanExpired();
+  const code = input.code.trim().toUpperCase();
+  if (!/^[A-HJ-NP-Z2-9]{5}$/.test(code)) return { ok: false, error: "Invalid room code" };
+
+  const existing = memoryRooms.get(code);
+  if (existing) {
+    // Already here: keep the host token authoritative and refresh the deadline.
+    existing.expiresAt = ttl();
+    existing.hostName = input.hostName;
+    if (input.guestToken && !existing.guestToken) {
+      existing.guestToken = input.guestToken;
+      existing.guestName = input.guestName ?? existing.guestName;
+    }
+    return { ok: true };
+  }
+
+  const room: SyncRoom = {
+    code,
+    hostToken: input.token,
+    guestToken: input.guestToken ?? null,
+    hostName: input.hostName,
+    guestName: input.guestName ?? null,
+    offer: null,
+    answer: null,
+    hostCandidates: [],
+    guestCandidates: [],
+    expiresAt: ttl(),
+    createdAt: new Date(),
+  };
+  memoryRooms.set(code, room);
+
+  if (hasDatabase()) {
+    try {
+      await ensureSchema();
+      await db
+        .insert(syncRooms)
+        .values({
+          code,
+          hostToken: input.token,
+          guestToken: input.guestToken ?? null,
+          guestName: input.guestName ?? null,
+          hostName: input.hostName,
+          expiresAt: room.expiresAt,
+        })
+        .onConflictDoUpdate({
+          target: syncRooms.code,
+          set: {
+            hostName: input.hostName,
+            guestToken: input.guestToken ?? null,
+            guestName: input.guestName ?? null,
+            expiresAt: room.expiresAt,
+          },
+        });
+    } catch (err) {
+      console.warn("Room re-registration could not reach the database:", err instanceof Error ? err.message : err);
+    }
+  }
+  return { ok: true };
+}
+
 export async function getSignalingRoom(
   code: string,
   role: "host" | "guest",
@@ -224,6 +296,13 @@ export async function getSignalingRoom(
   if (!r || r.expiresAt.getTime() <= Date.now()) return { room: null, valid: false };
 
   const valid = role === "host" ? r.hostToken === token : r.guestToken === token;
+  // A device that is actively polling keeps the room alive, so it can never expire mid-pairing.
+  if (valid) {
+    r.expiresAt = ttl();
+    if (hasDatabase()) {
+      db.update(syncRooms).set({ expiresAt: r.expiresAt }).where(eq(syncRooms.code, code)).catch(() => undefined);
+    }
+  }
   return { room: r, valid };
 }
 
@@ -238,7 +317,7 @@ export async function updateSignalingRoom(
   if (!room) return { ok: false, error: "This room has expired" };
   if (!valid) return { ok: false, error: "Unauthorized" };
 
-  const refresh = new Date(Date.now() + ROOM_LIFETIME_MS);
+  const refresh = ttl();
   room.expiresAt = refresh;
 
   if (action === "touch") {

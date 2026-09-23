@@ -57,6 +57,26 @@ AI Auto-fill works out of the box without any API key using free public dictiona
 
 ---
 
+## Sync between your devices over Wi‑Fi
+
+Open **Manage → Sync**. Two ways to pair, both over your home Wi‑Fi router:
+
+**1. QR pairing (recommended — no server involved at all)**
+1. On the device that has your words, tap **QR over Wi‑Fi → Show a QR code**.
+2. On the other device tap **QR over Wi‑Fi**, then scan it (or paste the copied code).
+3. That device shows a **reply code** — scan that back on the first device.
+4. Both screens show **Live sync active** and each other's device name.
+
+The whole handshake travels inside the QR codes, so nothing is stored on a server. A code stays valid for 45 minutes, and pairing cannot expire halfway. Scanning the code with a normal camera app opens VocaBera and pairs automatically.
+
+**2. Room code**
+1. On one device tap **Room code → Create room** to get a 5-character code (tap it to copy).
+2. On the other device type that code and tap **Connect**.
+
+Rooms now last 30 minutes, refresh themselves on every poll, and if a hosting server restarts mid-pairing the app silently rebuilds the room instead of reporting "expired".
+
+Once paired: **Auto-sync** pushes changes automatically, or use **Send mine** / **Get latest**. **End session** closes the connection. Keep both screens open while syncing — reloading the page ends the session.
+
 ## Install as a PWA (Mobile & Desktop)
 
 - **Android** (Chrome, Edge, Samsung Internet): tap **Install** on the banner, or menu **⋮ → Install app**.

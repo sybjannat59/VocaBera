@@ -1,4 +1,4 @@
-import { cleanDeviceName, createSignalingRoom, joinSignalingRoom } from "@/lib/server/rooms";
+import { cleanDeviceName, createSignalingRoom, joinSignalingRoom, registerSignalingRoom } from "@/lib/server/rooms";
 import { jsonError } from "@/lib/server/words";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +29,23 @@ export async function POST(req: Request) {
         role: "guest",
         hostName: res.hostName,
       });
+    }
+
+    // A host can re-register a room it already owns. Serverless instances do not share
+    // memory, so this heals the session instead of showing "room expired".
+    if (body.action === "register") {
+      const code = typeof body.code === "string" ? body.code.trim().toUpperCase() : "";
+      const token = typeof body.token === "string" ? body.token : "";
+      if (!code || !token) return jsonError("Missing room credentials");
+      const res = await registerSignalingRoom({
+        code,
+        token,
+        hostName: name,
+        guestToken: typeof body.guestToken === "string" ? body.guestToken : null,
+        guestName: typeof body.guestName === "string" ? body.guestName : null,
+      });
+      if (!res.ok) return jsonError(res.error || "Could not re-register room", 400);
+      return Response.json({ ok: true, code });
     }
 
     return jsonError("Unknown action");

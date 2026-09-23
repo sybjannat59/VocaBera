@@ -39,7 +39,7 @@ import {
   Volume2,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useDeferredValue, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useConfirm } from "@/components/providers";
 import { openRecap } from "@/components/daily-recap";
@@ -734,15 +734,6 @@ function DataTab() {
 export default function ManagePage() {
   const { status } = useVocab();
   const [tab, setTab] = useState<"settings" | "words" | "data" | "sync">("settings");
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      if (params.has("sync")) {
-        setTab("sync");
-      }
-    }
-  }, []);
   if (status === "loading") return <PageSkeleton />;
   return (
     <>

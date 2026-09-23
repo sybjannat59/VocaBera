@@ -28,6 +28,8 @@ export async function GET(req: Request, { params }: Ctx) {
     code: room.code,
     hostName: room.hostName,
     guestName: room.guestName,
+    // Only the host may see this: it is needed to restore a room lost to a serverless cold start.
+    guestToken: auth.role === "host" ? room.guestToken : null,
     offer: room.offer,
     answer: room.answer,
     remoteCandidates: auth.role === "host" ? room.guestCandidates : room.hostCandidates,

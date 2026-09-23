@@ -3,6 +3,17 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { exportLocalData } from "./idb";
+import {
+  applyRemotePayload,
+  decodePairPayload,
+  encodePairPayload,
+  localCandidates,
+  pairingSupported,
+  pairLink,
+  payloadFromLink,
+  waitForIceGathering,
+  type PairPayload,
+} from "./qr-signal";
 import { useSettings } from "./settings";
 import { useVocab } from "./store";
 import type { BootstrapData } from "./types";
@@ -14,6 +25,8 @@ interface RoomCredentials {
   code: string;
   token: string;
   role: SyncRole;
+  /** Token of the paired device — resent when a host has to re-register a lost room. */
+  peerToken?: string | null;
 }
 
 interface SyncView {
@@ -51,6 +64,8 @@ interface Transfer {
 
 type Msg = Record<string, unknown> & { t?: string };
 
+export type PairMode = "server" | "qr";
+
 interface SyncCtx extends SyncView {
   createRoom: (name?: string) => Promise<void>;
   joinRoom: (code: string, name?: string) => Promise<void>;
@@ -59,6 +74,16 @@ interface SyncCtx extends SyncView {
   getLatest: () => void;
   setLocalName: (name: string) => void;
   setAutoSync: (on: boolean) => void;
+  /* --- offline QR pairing (same Wi‑Fi, no server needed) --- */
+  pairMode: PairMode;
+  setPairMode: (mode: PairMode) => void;
+  pairCode: string;
+  qrPayload: string | null;
+  qrLink: string | null;
+  qrBusy: boolean;
+  startQrHost: (name?: string) => Promise<void>;
+  submitScannedCode: (text: string) => Promise<void>;
+  resetQrPairing: () => void;
 }
 
 const Ctx = createContext<SyncCtx | null>(null);
@@ -91,6 +116,14 @@ function defaultDeviceName() {
 }
 
 const cleanName = (name: string) => name.trim().replace(/[<>\u0000-\u001f]/g, "").slice(0, 48) || defaultDeviceName();
+
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+/** Local-only room code for QR pairing (no server involvement). */
+function randomRoomCode() {
+  const bytes = new Uint8Array(5);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (n) => CODE_ALPHABET[n & 31]).join("");
+}
 
 function hashText(text: string) {
   let h = 0x811c9dc5;
@@ -131,6 +164,12 @@ async function parseResponse<T>(res: Response): Promise<T> {
 export function LiveSyncProvider({ children }: { children: ReactNode }) {
   const { words, activity, sessions, status, importBackup } = useVocab();
   const { settings, update } = useSettings();
+  const [pairMode, setPairMode] = useState<PairMode>("server");
+  const [pairCode, setPairCode] = useState("");
+  const [qrPayload, setQrPayload] = useState<string | null>(null);
+  const [qrLink, setQrLink] = useState<string | null>(null);
+  const [qrBusy, setQrBusy] = useState(false);
+  const qrRoleRef = useRef<SyncRole | null>(null);
   const [state, setState] = useState<SyncView>({
     phase: "idle",
     role: null,
@@ -175,6 +214,7 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
       channelRef.current?.close();
       pcRef.current?.close();
     };
+    // Read the device name once; do not restart the provider on settings changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -274,7 +314,7 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
         setTimeout(() => updateState({ transferProgress: null }), 900);
       }
     },
-    [updateState],
+    [activity, sessions, updateState, words],
   );
 
   const handleMessage = useCallback(
@@ -359,7 +399,7 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
       dc.onopen = () => {
         updateState({ phase: "connected", error: "", peerName: state.peerName || "Paired device" });
         if (dc.readyState === "open") dc.send(JSON.stringify({ t: "hello", name: localNameRef.current }));
-        // Stop polling the signaling server once WebRTC peer connection is established
+        // Devices now talk directly — stop polling the signaling server (saves serverless invocations).
         pollStopRef.current?.();
         pollStopRef.current = null;
         lastObservedHash.current = storeHash({ words, activity, sessions });
@@ -371,7 +411,7 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
         if (mounted.current && roomRef.current) updateState({ phase: "error", error: "Connection closed. End this session and pair again." });
       };
     },
-    [activity, handleMessage, sendSnapshot, sessions, settings.autoSync, state.peerName, updateState, words],
+    [activity, handleMessage, post, sendSnapshot, sessions, settings.autoSync, state.peerName, updateState, words],
   );
 
   const signalLoop = useCallback(
@@ -381,45 +421,68 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
       let candidateCursor = 0;
       let descriptionSet = false;
       let first = true;
-      let consecutive404s = 0;
-
+      let healing = 0;
       const poll = async () => {
-        if (stopped || busy || roomRef.current?.code !== room.code) return;
+        const current = roomRef.current;
+        if (stopped || busy || !current || current.code !== room.code) return;
         busy = true;
         try {
-          const res = await fetch(`/api/sync/${room.code}?role=${room.role}&token=${encodeURIComponent(room.token)}`, { cache: "no-store" });
-          
-          if (!res.ok) {
-            if (res.status === 404) {
-              consecutive404s++;
-              // Don't kill the room on a single transient 404
-              if (consecutive404s >= 3) {
-                stopped = true;
-                updateState({ phase: "error", error: "This sync room expired. Please create a new room." });
-                return;
+          const res = await fetch(`/api/sync/${current.code}?role=${current.role}&token=${encodeURIComponent(current.token)}`, { cache: "no-store" });
+
+          // Serverless instances do not share memory, so a room can appear "lost" even
+          // though both devices are still working. Heal it instead of giving up.
+          if (res.status === 404 && healing < 6) {
+            healing++;
+            if (current.role === "host") {
+              // Re-register our own room (same code and token), then re-publish the offer.
+              const reg = await fetch("/api/sync", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "register", code: current.code, token: current.token, name: localNameRef.current, guestToken: current.peerToken ?? null }),
+              }).catch(() => null);
+              const local = pc.localDescription;
+              if (reg?.ok && local) {
+                await post(current, "offer", { description: { type: local.type, sdp: local.sdp } }).catch(() => undefined);
               }
             } else {
-              consecutive404s = 0;
+              // Re-join: the host may have re-registered the room without our token.
+              const rejoin = await fetch("/api/sync", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "join", code: current.code, name: localNameRef.current }),
+              }).catch(() => null);
+              if (rejoin?.ok) {
+                const data = (await rejoin.json()) as { token?: string; hostName?: string };
+                if (data?.token) {
+                  roomRef.current = { code: current.code, token: data.token, role: "guest" };
+                  descriptionSet = false;
+                  candidateCursor = 0;
+                  if (data.hostName) updateState({ peerName: data.hostName });
+                }
+              }
             }
+            busy = false;
+            setTimeout(poll, 700);
             return;
           }
 
-          consecutive404s = 0;
+          if (!res.ok) throw new Error(res.status === 404 ? "This sync room expired." : "Lost the room connection.");
+          healing = 0;
           const info = (await res.json()) as {
             hostName?: string;
             guestName?: string | null;
             offer?: RTCSessionDescriptionInit | null;
             answer?: RTCSessionDescriptionInit | null;
             remoteCandidates?: RTCIceCandidateInit[];
+            guestToken?: string | null;
           };
-
+          if (info.guestToken) current.peerToken = info.guestToken;
           if (first) {
             updateState({ peerName: room.role === "host" ? info.guestName || "" : info.hostName || "" });
             first = false;
           } else if (info.guestName || info.hostName) {
             updateState({ peerName: room.role === "host" ? info.guestName || state.peerName : info.hostName || state.peerName });
           }
-
           if (room.role === "guest" && info.offer && !descriptionSet) {
             descriptionSet = true;
             updateState({ phase: "connecting", error: "" });
@@ -427,15 +490,14 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             const local = pc.localDescription;
-            if (local) await post(room, "answer", { description: { type: local.type, sdp: local.sdp } });
+            const creds = roomRef.current;
+            if (local && creds) await post(creds, "answer", { description: { type: local.type, sdp: local.sdp } });
           }
-
           if (room.role === "host" && info.answer && !descriptionSet) {
             descriptionSet = true;
             updateState({ phase: "connecting", error: "" });
             await pc.setRemoteDescription(info.answer);
           }
-
           const candidates = info.remoteCandidates ?? [];
           if (pc.remoteDescription) {
             while (candidateCursor < candidates.length) {
@@ -448,13 +510,16 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
             }
           }
         } catch (err) {
-          console.warn("Signal poll transient issue:", err);
+          const message = err instanceof Error ? err.message : "Connection lost";
+          if (/expired|lost the room/i.test(message)) {
+            stopped = true;
+            updateState({ phase: "error", error: message });
+          }
         } finally {
           busy = false;
-          if (!stopped && roomRef.current?.code === room.code) setTimeout(poll, 1200);
+          if (!stopped && roomRef.current?.code === room.code) setTimeout(poll, 950);
         }
       };
-
       void poll();
       return () => {
         stopped = true;
@@ -472,8 +537,8 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
       };
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === "connected") updateState({ phase: "connected", error: "" });
-        if (pc.connectionState === "failed") updateState({ phase: "error", error: "Could not establish a direct connection. Ensure both devices are connected to the same Wi‑Fi." });
-        if (pc.connectionState === "disconnected") updateState({ error: "Connection interrupted — waiting for peer..." });
+        if (pc.connectionState === "failed") updateState({ phase: "error", error: "Could not establish a direct connection. Check that both devices are on the same Wi‑Fi, then try again." });
+        if (pc.connectionState === "disconnected") updateState({ error: "Connection interrupted — waiting for the peer to reconnect…" });
       };
       pc.ondatachannel = (event) => attachChannel(event.channel);
       return pc;
@@ -597,9 +662,198 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
     };
   }, [activity, sessions, sendSnapshot, settings.autoSync, state.phase, status, words]);
 
+  /* ------------------------- Offline QR pairing (same Wi‑Fi) ------------------------- */
+
+  /** Host: build an offer and render it as a QR code. No server involved. */
+  const startQrHost = useCallback(
+    async (requestedName?: string) => {
+      if (!pairingSupported()) {
+        updateState({ phase: "error", error: "This browser can't use QR pairing (needs a secure context and WebRTC). Use the room code instead." });
+        return;
+      }
+      const deviceName = requestedName === undefined ? localNameRef.current : cleanName(requestedName);
+      if (requestedName !== undefined) setLocalName(deviceName);
+      closePeer();
+      roomRef.current = null;
+      qrRoleRef.current = "host";
+      setQrBusy(true);
+      updateState({ phase: "waiting", code: "", role: "host", peerName: "", error: "", transferProgress: null });
+      try {
+        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        pcRef.current = pc;
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === "connected") updateState({ phase: "connected", error: "" });
+          if (pc.connectionState === "failed") updateState({ phase: "error", error: "Could not connect. Make sure both devices are on the same Wi‑Fi, then create a new code." });
+        };
+        pc.ondatachannel = (event) => attachChannel(event.channel);
+        attachChannel(pc.createDataChannel("vocabera-qr-sync", { ordered: true }));
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitForIceGathering(pc);
+
+        const code = randomRoomCode();
+        const payload: PairPayload = {
+          v: 1,
+          k: "o",
+          c: code,
+          n: deviceName,
+          s: pc.localDescription?.sdp ?? offer.sdp ?? "",
+          i: localCandidates(pc),
+          t: Date.now(),
+        };
+        const encoded = await encodePairPayload(payload);
+        setPairCode(code);
+        setQrPayload(encoded);
+        setQrLink(pairLink(encoded, window.location.origin));
+      } catch (err) {
+        updateState({ phase: "error", error: err instanceof Error ? err.message : "Could not create a pairing code" });
+      } finally {
+        setQrBusy(false);
+      }
+    },
+    [attachChannel, closePeer, setLocalName, updateState],
+  );
+
+  /** Guest: scan (or paste) the host's code. */
+  const acceptQrOffer = useCallback(
+    async (text: string) => {
+      if (!pairingSupported()) {
+        updateState({ phase: "error", error: "This browser can't use QR pairing. Enter the 5-character room code instead." });
+        return;
+      }
+      setQrBusy(true);
+      try {
+        const payload = await decodePairPayload(payloadFromLink(text));
+        if (!payload) throw new Error("That code isn't a VocaBera pairing code");
+        if (Date.now() - payload.t > 45 * 60_000) throw new Error("This pairing code is too old — ask the other device for a new one");
+        closePeer();
+        qrRoleRef.current = "guest";
+        updateState({ phase: "connecting", code: payload.c, role: "guest", peerName: payload.n, error: "", transferProgress: null });
+        setPairCode(payload.c);
+        setQrPayload(null);
+        setQrLink(null);
+
+        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        pcRef.current = pc;
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === "connected") updateState({ phase: "connected", error: "" });
+          if (pc.connectionState === "failed") updateState({ phase: "error", error: "Could not connect. Check that both devices are on the same Wi‑Fi." });
+        };
+        pc.ondatachannel = (event) => attachChannel(event.channel);
+
+        await applyRemotePayload(pc, payload, "o");
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await waitForIceGathering(pc);
+
+        const response: PairPayload = {
+          v: 1,
+          k: "a",
+          c: payload.c,
+          n: localNameRef.current,
+          s: pc.localDescription?.sdp ?? answer.sdp ?? "",
+          i: localCandidates(pc),
+          t: Date.now(),
+        };
+        const encoded = await encodePairPayload(response);
+        setQrPayload(encoded);
+        setQrLink(pairLink(encoded, window.location.origin));
+        toast.success("Reply code ready", { description: "Show this screen to the other device so it can scan your code." });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not read that code";
+        updateState({ phase: "error", error: message });
+        toast.error(message);
+      } finally {
+        setQrBusy(false);
+      }
+    },
+    [attachChannel, closePeer, updateState],
+  );
+
+  /** Host: scan (or paste) the guest's reply. */
+  const acceptQrAnswer = useCallback(
+    async (text: string) => {
+      setQrBusy(true);
+      try {
+        const payload = await decodePairPayload(payloadFromLink(text));
+        if (!payload) throw new Error("That code isn't a VocaBera reply code");
+        const pc = pcRef.current;
+        if (!pc) throw new Error("Create a pairing code first");
+        if (payload.c !== pairCode) throw new Error("This reply is for a different pairing code");
+        updateState({ phase: "connecting", error: "" });
+        await applyRemotePayload(pc, payload, "a");
+        updateState({ peerName: payload.n });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not read that reply";
+        updateState({ error: message });
+        toast.error(message);
+      } finally {
+        setQrBusy(false);
+      }
+    },
+    [pairCode, updateState],
+  );
+
+  // One entry point for the UI: route the scanned text by role.
+  const submitScannedCode = useCallback(
+    async (text: string) => {
+      // In QR mode the signaling `roomRef` is intentionally empty, so route by the QR role:
+      // a host scans the guest's reply, everyone else is scanning an invitation.
+      if (qrRoleRef.current === "host") await acceptQrAnswer(text);
+      else await acceptQrOffer(text);
+    },
+    [acceptQrAnswer, acceptQrOffer],
+  );
+
+  const resetQrPairing = useCallback(() => {
+    closePeer();
+    roomRef.current = null;
+    qrRoleRef.current = null;
+    setQrPayload(null);
+    setQrLink(null);
+    setPairCode("");
+    updateState({ phase: "idle", role: null, code: "", peerName: "", error: "", transferProgress: null });
+  }, [closePeer, updateState]);
+
   const value = useMemo<SyncCtx>(
-    () => ({ ...state, createRoom, joinRoom, endSession, sendMine, getLatest, setLocalName, setAutoSync }),
-    [state, createRoom, joinRoom, endSession, sendMine, getLatest, setLocalName, setAutoSync],
+    () => ({
+      ...state,
+      createRoom,
+      joinRoom,
+      endSession,
+      sendMine,
+      getLatest,
+      setLocalName,
+      setAutoSync,
+      pairMode,
+      setPairMode,
+      pairCode,
+      qrPayload,
+      qrLink,
+      qrBusy,
+      startQrHost,
+      submitScannedCode,
+      resetQrPairing,
+    }),
+    [
+      state,
+      createRoom,
+      joinRoom,
+      endSession,
+      sendMine,
+      getLatest,
+      setLocalName,
+      setAutoSync,
+      pairMode,
+      pairCode,
+      qrPayload,
+      qrLink,
+      qrBusy,
+      startQrHost,
+      submitScannedCode,
+      resetQrPairing,
+    ],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
