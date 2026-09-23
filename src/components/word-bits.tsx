@@ -16,41 +16,53 @@ import {
   Star,
   Tag,
   Trash,
+  LoaderCircle,
   Volume2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { toast } from "sonner";
 import { getLocalWordHistory } from "@/lib/idb";
 import { STATUS_META, accuracyOf, isDue, relativeTime, wordStatus } from "@/lib/learning";
 import { useVocab, useWordSheet } from "@/lib/store";
 import type { Word, WordHistoryItem } from "@/lib/types";
+import { getServerSpeechState, getSpeechState, prefetchPronunciation, stopSpeech, subscribeSpeech } from "@/lib/tts";
 import { cn, findWordInSentence, haptic, speak } from "@/lib/utils";
 import { useConfirm } from "./providers";
 import { Badge, Button, DifficultyBadge, IconTile, MasteryDots, PosBadge, Sheet, type IconType, type Tone } from "./ui";
 
 export function SpeakButton({ text, size = "md", className }: { text: string; size?: "sm" | "md"; className?: string }) {
-  const [on, setOn] = useState(false);
+  const speech = useSyncExternalStore(subscribeSpeech, getSpeechState, getServerSpeechState);
+  const mine = speech.text === text.trim() && speech.status !== "idle";
+  const loading = mine && speech.status === "loading";
+  const speaking = mine && speech.status === "speaking";
   return (
     <button
       type="button"
-      aria-label={`Pronounce ${text}`}
-      title="Pronounce"
+      aria-label={mine ? `Stop pronouncing ${text}` : `Pronounce ${text}`}
+      title={speaking && speech.label ? speech.label : "Pronounce"}
+      onPointerEnter={() => prefetchPronunciation(text)}
+      onFocus={() => prefetchPronunciation(text)}
       onClick={(e) => {
         e.stopPropagation();
-        if (speak(text)) {
-          setOn(true);
-          setTimeout(() => setOn(false), 900);
-        } else toast.error("Speech is not supported in this browser");
+        if (mine) {
+          stopSpeech();
+          return;
+        }
+        if (!speak(text)) toast.error("Speech isn't supported in this browser");
       }}
       className={cn(
         "grid shrink-0 place-items-center rounded-full transition active:scale-90",
         size === "sm" ? "size-8" : "size-10",
-        on ? "bg-brand-500/15 text-brand-600 dark:text-brand-300" : "text-muted hover:bg-black/5 hover:text-fg dark:hover:bg-white/10",
+        mine ? "bg-brand-500/15 text-brand-600 dark:text-brand-300" : "text-muted hover:bg-black/5 hover:text-fg dark:hover:bg-white/10",
         className,
       )}
     >
-      <Volume2 className={cn(size === "sm" ? "size-4" : "size-[19px]", on && "animate-pulse")} />
+      {loading ? (
+        <LoaderCircle className={cn(size === "sm" ? "size-4" : "size-[19px]", "animate-spin")} />
+      ) : (
+        <Volume2 className={cn(size === "sm" ? "size-4" : "size-[19px]", speaking && "animate-pulse")} />
+      )}
     </button>
   );
 }
@@ -286,6 +298,7 @@ function WordDetail({ w, onClose }: { w: Word; onClose: () => void }) {
     };
   }, [w.id, w.timesReviewed]);
   const hasParts = !!(w.prefix || w.rootWord || w.suffix);
+  useEffect(() => prefetchPronunciation(w.word), [w.word]);
 
   const copy = async () => {
     const text = [

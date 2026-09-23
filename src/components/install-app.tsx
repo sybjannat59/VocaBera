@@ -1,6 +1,6 @@
 "use client";
 
-import { BadgeCheck, CloudOff, CloudUpload, Download, RefreshCw, Share, Smartphone, SquarePlus, Wifi, X } from "lucide-react";
+import { BadgeCheck, CloudOff, CloudUpload, Download, RefreshCw, Share, Smartphone, SquarePlus, Wifi, Wrench, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { usePwa } from "@/lib/pwa";
@@ -78,7 +78,7 @@ export function InstallBanner() {
 
 /** Full install & offline status card for Manage → Settings. */
 export function InstallSettingsCard() {
-  const { canInstall, installed, isIOS, install, offlineReady, online, version, checkForUpdate } = useInstall();
+  const { canInstall, installed, isIOS, install, offlineReady, online, version, checkForUpdate, repair } = useInstall();
 
   const status = installed
     ? { label: "Installed", cls: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300" }
@@ -137,9 +137,19 @@ export function InstallSettingsCard() {
       </div>
       <div className="mt-3 flex items-center justify-between px-1 text-[11.5px] text-muted">
         <span>{version ? `Build ${version}` : "Build —"}</span>
-        <button type="button" onClick={() => void checkForUpdate()} className="inline-flex items-center gap-1 font-bold text-brand-600 dark:text-brand-300">
-          <RefreshCw className="size-3.5" /> Check for updates
-        </button>
+        <span className="flex items-center gap-3">
+          <button type="button" onClick={() => void checkForUpdate()} className="inline-flex items-center gap-1 font-bold text-brand-600 dark:text-brand-300">
+            <RefreshCw className="size-3.5" /> Check for updates
+          </button>
+          <button
+            type="button"
+            onClick={() => void repair()}
+            title="Fixes a stuck or outdated app. Your words and progress are kept."
+            className="inline-flex items-center gap-1 font-bold text-muted hover:text-fg"
+          >
+            <Wrench className="size-3.5" /> Repair app
+          </button>
+        </span>
       </div>
     </Card>
   );

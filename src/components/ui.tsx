@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion, useDragControls } from "motion/react";
+import { AnimatePresence, motion, useDragControls, useIsPresent } from "motion/react";
 import { LoaderCircle, X } from "lucide-react";
 import {
   useEffect,
@@ -14,6 +14,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
+import { lockScroll } from "@/lib/scroll-lock";
 import { capitalizeFirst } from "@/lib/text-format";
 import { clamp, cn, uniqueCI } from "@/lib/utils";
 
@@ -591,6 +592,19 @@ export function useMediaQuery(query: string) {
   );
 }
 
+/**
+ * Full-screen layer for AnimatePresence children. While it is animating out it stops
+ * receiving taps, so a stalled exit animation can never block the app underneath.
+ */
+export function PresenceLayer({ className, children, ...rest }: HTMLAttributes<HTMLDivElement>) {
+  const isPresent = useIsPresent();
+  return (
+    <div {...rest} className={className} style={{ ...rest.style, pointerEvents: isPresent ? undefined : "none" }} aria-hidden={isPresent ? rest["aria-hidden"] : true}>
+      {children}
+    </div>
+  );
+}
+
 export function Sheet({
   open,
   onClose,
@@ -604,61 +618,71 @@ export function Sheet({
   className?: string;
   children: ReactNode;
 }) {
-  const desktop = useMediaQuery("(min-width: 768px)");
-  const controls = useDragControls();
-
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open, onClose]);
-
   return (
     <AnimatePresence>
       {open && (
-        <div key="sheet" className="fixed inset-0 z-[70] flex items-end justify-center md:items-center md:p-6" role="dialog" aria-modal="true" aria-label={label}>
-          <motion.div
-            className="absolute inset-0 bg-slate-950/45"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={onClose}
-          />
-          <motion.div
-            className={cn(
-              "relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[30px] border border-white/70 bg-[rgba(248,250,255,0.97)] shadow-2xl md:max-w-xl md:rounded-[30px] dark:border-white/10 dark:bg-[rgba(16,21,37,0.97)]",
-              className,
-            )}
-            initial={desktop ? { opacity: 0, y: 24, scale: 0.98 } : { y: "100%" }}
-            animate={desktop ? { opacity: 1, y: 0, scale: 1 } : { y: 0 }}
-            exit={desktop ? { opacity: 0, y: 16, scale: 0.98 } : { y: "100%" }}
-            transition={{ type: "spring", stiffness: 380, damping: 36 }}
-            drag={desktop ? false : "y"}
-            dragListener={false}
-            dragControls={controls}
-            dragConstraints={{ top: 0, bottom: 0 }}
-            dragElastic={{ top: 0, bottom: 0.7 }}
-            onDragEnd={(_, info) => {
-              if (info.offset.y > 110 || info.velocity.y > 700) onClose();
-            }}
-          >
-            <div
-              className="flex shrink-0 cursor-grab touch-none justify-center pb-1 pt-2.5 md:hidden"
-              onPointerDown={(e) => controls.start(e)}
-            >
-              <span className="h-1.5 w-11 rounded-full bg-slate-400/50" />
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
-          </motion.div>
-        </div>
+        <SheetFrame key="sheet" onClose={onClose} label={label} className={className}>
+          {children}
+        </SheetFrame>
       )}
     </AnimatePresence>
+  );
+}
+
+function SheetFrame({ onClose, label, className, children }: { onClose: () => void; label: string; className?: string; children: ReactNode }) {
+  const desktop = useMediaQuery("(min-width: 768px)");
+  const controls = useDragControls();
+  const isPresent = useIsPresent();
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  // Lock page scrolling only while the sheet is really open (released as soon as it starts closing).
+  useEffect(() => {
+    if (!isPresent) return;
+    const unlock = lockScroll();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      unlock();
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [isPresent]);
+
+  return (
+    <PresenceLayer className="fixed inset-0 z-[70] flex items-end justify-center md:items-center md:p-6" role="dialog" aria-modal="true" aria-label={label}>
+      <motion.div
+        className="absolute inset-0 bg-slate-950/45"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
+        onClick={() => closeRef.current()}
+      />
+      <motion.div
+        className={cn(
+          "relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[30px] border border-white/70 bg-[rgba(248,250,255,0.97)] shadow-2xl md:max-w-xl md:rounded-[30px] dark:border-white/10 dark:bg-[rgba(16,21,37,0.97)]",
+          className,
+        )}
+        initial={desktop ? { opacity: 0, y: 24, scale: 0.98 } : { y: "100%" }}
+        animate={desktop ? { opacity: 1, y: 0, scale: 1 } : { y: 0 }}
+        exit={desktop ? { opacity: 0, y: 16, scale: 0.98, transition: { duration: 0.16 } } : { y: "100%", transition: { duration: 0.22, ease: [0.4, 0, 1, 1] } }}
+        transition={{ type: "spring", stiffness: 380, damping: 36 }}
+        drag={desktop ? false : "y"}
+        dragListener={false}
+        dragControls={controls}
+        dragConstraints={{ top: 0, bottom: 0 }}
+        dragElastic={{ top: 0, bottom: 0.7 }}
+        onDragEnd={(_, info) => {
+          if (info.offset.y > 110 || info.velocity.y > 700) closeRef.current();
+        }}
+      >
+        <div className="flex shrink-0 cursor-grab touch-none justify-center pb-1 pt-2.5 md:hidden" onPointerDown={(e) => controls.start(e)}>
+          <span className="h-1.5 w-11 rounded-full bg-slate-400/50" />
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
+      </motion.div>
+    </PresenceLayer>
   );
 }

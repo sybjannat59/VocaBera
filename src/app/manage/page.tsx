@@ -44,7 +44,7 @@ import { toast } from "sonner";
 import { useConfirm } from "@/components/providers";
 import { openRecap } from "@/components/daily-recap";
 import { SyncPanel } from "@/components/sync-panel";
-import { TtsSettingsCard } from "@/components/tts-settings";
+import { VoiceSettingsCard } from "@/components/voice-settings";
 import { InstallSettingsCard } from "@/components/install-app";
 import { exportWordsExcel, openExcelImport } from "@/components/excel-import";
 import { exportLocalData } from "@/lib/idb";
@@ -189,7 +189,7 @@ function SettingsTab() {
           </Row>
         </Card>
 
-        <TtsSettingsCard />
+        <VoiceSettingsCard />
 
         <Card className="p-4 sm:p-5">
           <SectionTitle title="Keyboard shortcuts" className="!px-0" action={<Keyboard className="size-4 text-muted" />} />

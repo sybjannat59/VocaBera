@@ -103,6 +103,7 @@
   --surface-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 30px -18px rgba(30, 41, 99, 0.22);
   --field: rgba(255, 255, 255, 0.85);
   --field-border: rgba(15, 23, 42, 0.09);
+  --field-solid: #fbfcff;
   --line: rgba(15, 23, 42, 0.07);
 }
 .dark {
@@ -118,6 +119,7 @@
   --surface-shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 14px 34px -20px rgba(0, 0, 0, 0.7);
   --field: rgba(13, 18, 34, 0.72);
   --field-border: rgba(255, 255, 255, 0.1);
+  --field-solid: #10162a;
   --line: rgba(255, 255, 255, 0.07);
 }
 
@@ -139,8 +141,8 @@
   border-radius: 16px;
   transition: border-color 0.15s, box-shadow 0.15s;
   &:focus-within {
-    border-color: var(--b-400);
-    box-shadow: 0 0 0 4px color-mix(in oklab, var(--b-500) 16%, transparent);
+    border-color: color-mix(in oklab, var(--b-500) 55%, var(--field-border));
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--b-500) 13%, transparent);
   }
 }
 @utility brand-gradient {
@@ -189,34 +191,38 @@ body {
 ::selection {
   background: color-mix(in oklab, var(--b-500) 26%, transparent);
 }
-:focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--b-500) 45%, transparent);
-  outline-offset: 2px;
-  transition: outline-color 0.15s ease;
+/* Focus: text fields show their own soft glow (see .field), so no extra outline box is drawn
+   around them. Buttons, links and switches get a rounded ring for keyboard users only.
+   Kept in the base layer so utilities such as outline-none always win. */
+@layer base {
+  :where(a, button, summary, [role="button"], [role="switch"], [role="tab"], [tabindex]:not([tabindex="-1"])):focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--b-500) 60%, transparent);
+    outline-offset: 2px;
+  }
+  :where(input, textarea, select):focus,
+  :where(input, textarea, select):focus-visible {
+    outline: none;
+  }
+  input[type="range"]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--b-500) 22%, transparent);
+  }
+  /* Browser autofill paints inputs light blue; keep the app's own field colours instead. */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  textarea:-webkit-autofill,
+  select:-webkit-autofill {
+    -webkit-text-fill-color: var(--fg);
+    caret-color: var(--fg);
+    -webkit-box-shadow: 0 0 0 1000px var(--field-solid) inset;
+    box-shadow: 0 0 0 1000px var(--field-solid) inset;
+    transition: background-color 99999s ease-out 0s;
+  }
 }
 input,
 textarea,
 select {
   font-size: 16px;
-}
-input:focus::placeholder {
-  color: color-mix(in oklab, var(--muted) 50%, transparent);
-}
-.field:focus-within {
-  border-color: var(--b-400);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--b-500) 14%, transparent);
-}
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--b-500) 35%, transparent);
-  outline-offset: 2px;
-}
-input:not(:focus-visible),
-textarea:not(:focus-visible),
-select:not(:focus-visible),
-button:not(:focus-visible) {
-  outline: none;
 }
 @media (min-width: 768px) {
   input,

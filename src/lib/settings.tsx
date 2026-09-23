@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { QuestionType } from "./quiz-engine";
 import type { SourceKey } from "./types";
-import { prefs } from "./utils";
+import { prefs } from "./prefs";
 
 export type ThemeMode = "light" | "dark" | "system";
 export type Accent = "indigo" | "ocean" | "emerald" | "sunset" | "rose";
@@ -34,6 +34,12 @@ export interface Settings {
   autoSync: boolean;
   /** Only allow direct connections inside the local network (no internet relay). */
   syncLocalOnly: boolean;
+  /** natural = real recordings + best device voice · studio = on-device AI voice · device = device voice only */
+  ttsEngine: "natural" | "studio" | "device";
+  ttsRecordings: boolean;
+  ttsVoiceURI: string;
+  ttsStudioVoice: string;
+  ttsPitch: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -73,6 +79,11 @@ export const DEFAULT_SETTINGS: Settings = {
   matchMeaning: "bangla",
   autoSync: true,
   syncLocalOnly: false,
+  ttsEngine: "natural",
+  ttsRecordings: true,
+  ttsVoiceURI: "",
+  ttsStudioVoice: "af_heart",
+  ttsPitch: 1,
 };
 
 export const ACCENTS: { id: Accent; label: string; from: string; to: string }[] = [
@@ -127,8 +138,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     Object.assign(prefs, {
       lang: settings.voice,
       rate: settings.speechRate,
+      pitch: settings.ttsPitch,
       sound: settings.sound,
       haptics: settings.haptics,
+      engine: settings.ttsEngine,
+      recordings: settings.ttsRecordings,
+      voiceURI: settings.ttsVoiceURI,
+      studioVoice: settings.ttsStudioVoice,
     });
   }, [settings, ready]);
 

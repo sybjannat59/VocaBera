@@ -135,6 +135,23 @@ export function VocabProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  // An older VocaBera tab can block a database upgrade; explain it instead of spinning forever.
+  useEffect(() => {
+    const blocked = () =>
+      toast.warning("VocaBera is open in another tab", {
+        id: "vb-db-blocked",
+        duration: Infinity,
+        description: "Close the other VocaBera tabs or windows to finish updating. Your words are safe.",
+      });
+    const ready = () => toast.dismiss("vb-db-blocked");
+    window.addEventListener("vb:db-blocked", blocked);
+    window.addEventListener("vb:db-ready", ready);
+    return () => {
+      window.removeEventListener("vb:db-blocked", blocked);
+      window.removeEventListener("vb:db-ready", ready);
+    };
+  }, []);
+
   const addWord = useCallback(async (input: WordInput) => {
     try {
       const res = await addLocalWord(input, localDay());

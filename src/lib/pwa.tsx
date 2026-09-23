@@ -25,10 +25,36 @@ interface PwaCtx {
   version: string;
   promptInstall: () => Promise<InstallOutcome>;
   checkForUpdate: () => Promise<void>;
+  repair: () => Promise<void>;
 }
 
 const Ctx = createContext<PwaCtx | null>(null);
 const READY_KEY = "vb-offline-ready";
+
+/**
+ * Last-resort fix for a stuck app: removes the service worker and cached files, then reloads.
+ * Your words and progress live in IndexedDB and are not touched.
+ */
+export async function repairApp() {
+  try {
+    const regs = (await navigator.serviceWorker?.getRegistrations?.()) ?? [];
+    await Promise.all(regs.map((r) => r.unregister()));
+  } catch {
+    /* no service worker */
+  }
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k.startsWith("vb-") || k.startsWith("next-")).map((k) => caches.delete(k)));
+  } catch {
+    /* Cache Storage unavailable */
+  }
+  try {
+    sessionStorage.removeItem("vb-chunk-reload");
+  } catch {
+    /* ignore */
+  }
+  window.location.reload();
+}
 
 function detectStandalone() {
   return (
@@ -50,7 +76,6 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   const [offlineReady, setOfflineReady] = useState(false);
   const [version, setVersion] = useState("");
   const regRef = useRef<ServiceWorkerRegistration | null>(null);
-  const updateRequested = useRef(false);
 
   // Install prompt, display mode & connectivity.
   useEffect(() => {
@@ -92,69 +117,39 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Service worker registration + update flow (production only).
+  // Service worker (production only). New versions activate by themselves; the page is never
+  // force-reloaded mid-task — Next.js reloads on the next navigation when the build changed.
   useEffect(() => {
     if (process.env.NODE_ENV !== "production" || !("serviceWorker" in navigator)) return;
     let interval: ReturnType<typeof setInterval> | undefined;
-    let pendingReload = false;
-    const onControllerChange = () => {
-      if (pendingReload) window.location.reload();
-    };
-    const onVisible = () => {
-      if (document.visibilityState === "visible" && regRef.current?.active) regRef.current?.update().catch(() => undefined);
-    };
-    const promptUpdate = (worker: ServiceWorker) => {
-      toast("A new version of VocaBera is ready", {
-        id: "vb-update",
-        duration: Infinity,
-        description: "Update now to get the latest features and fixes.",
-        action: {
-          label: "Update",
-          onClick: () => {
-            pendingReload = true;
-            worker.postMessage({ type: "SKIP_WAITING" });
-          },
-        },
-      });
-    };
-    const readVersion = (worker: ServiceWorker | null) => {
+    let hadController = !!navigator.serviceWorker.controller;
+
+    const readVersion = (worker: ServiceWorker | null | undefined) => {
       if (!worker) return;
       const channel = new MessageChannel();
       channel.port1.onmessage = (e) => setVersion(String(e.data ?? ""));
       worker.postMessage({ type: "GET_VERSION" }, [channel.port2]);
+    };
+    const onControllerChange = () => {
+      readVersion(navigator.serviceWorker.controller);
+      if (!hadController) {
+        hadController = true; // first install — nothing to announce
+        return;
+      }
+      toast.success("VocaBera was updated", {
+        id: "vb-updated",
+        description: "You're on the latest version.",
+        action: { label: "Reload", onClick: () => window.location.reload() },
+      });
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") regRef.current?.update().catch(() => undefined);
     };
 
     const register = async () => {
       try {
         const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" });
         regRef.current = reg;
-        let pumpId: number | undefined;
-        const pump = () => {
-          pumpId = window.setTimeout(() => {
-            if (document.visibilityState === "visible" && regRef.current?.waiting) {
-              const worker = regRef.current.waiting;
-              if (worker?.state === "installed") {
-                // A tab is waiting on a broken preload. Ask the SW to skip waiting now.
-                pendingReload = true;
-                worker.postMessage({ type: "SKIP_WAITING" });
-              }
-            } else pump();
-          }, 4000) as unknown as number;
-        };
-        pump();
-        if (reg.waiting && navigator.serviceWorker.controller) promptUpdate(reg.waiting);
-        reg.addEventListener("updatefound", () => {
-          const worker = reg.installing;
-          worker?.addEventListener("statechange", () => {
-            if (worker.state === "installed" && navigator.serviceWorker.controller) promptUpdate(worker);
-          });
-        });
-        navigator.serviceWorker.addEventListener("message", (event) => {
-          if (event.data?.type === "SW_ACTIVATED") {
-            clearTimeout(pumpId);
-            setOfflineReady(true);
-          }
-        });
         const ready = await navigator.serviceWorker.ready;
         setOfflineReady(true);
         readVersion(ready.active);
@@ -168,10 +163,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
         } catch {
           /* storage unavailable */
         }
-        interval = setInterval(() => {
-          reg.update().catch(() => undefined);
-          pump();
-        }, 60 * 60 * 1000);
+        interval = setInterval(() => reg.update().catch(() => undefined), 30 * 60 * 1000);
         document.addEventListener("visibilitychange", onVisible);
       } catch (err) {
         console.warn("Service worker registration failed", err);
@@ -211,7 +203,8 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     }
     try {
       await reg.update();
-      if (!reg.waiting && !reg.installing) toast.success("You're on the latest version");
+      if (reg.installing || reg.waiting) toast.message("Downloading the latest version…", { id: "vb-updated" });
+      else toast.success("You're on the latest version");
     } catch {
       toast.error("Couldn't check for updates — are you online?");
     }
@@ -227,6 +220,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
       version,
       promptInstall,
       checkForUpdate,
+      repair: repairApp,
     }),
     [online, deferred, installed, isIOS, offlineReady, version, promptInstall, checkForUpdate],
   );

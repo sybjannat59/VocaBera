@@ -1,9 +1,14 @@
 "use client";
 
 import {
+  Activity,
   Camera,
   CircleAlert,
   CircleCheck,
+  CircleMinus,
+  CircleX,
+  KeyRound,
+  TriangleAlert,
   Copy,
   Globe,
   Laptop,
@@ -24,7 +29,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
-import { extractSyncCode, useLiveSync, type LinkRoute, type SyncDevice, type SyncPhase } from "@/lib/live-sync";
+import { extractSyncCode, useLiveSync, type CheckResult, type LinkRoute, type NetworkReport, type SyncDevice, type SyncPhase } from "@/lib/live-sync";
 import { cn } from "@/lib/utils";
 import { QrCodeCard, QrScanner } from "./qr-pairing";
 import { Button, Card, Field, IconTile, Switch, inputCls, type IconType, type Tone } from "./ui";
@@ -226,6 +231,13 @@ export function SyncPanel() {
               </>
             )}
 
+            {s.issue && s.phase !== "error" && s.phase !== "idle" && (
+              <div role="status" className="flex items-start gap-2.5 rounded-2xl bg-amber-500/10 px-3.5 py-3 text-[13px] font-medium leading-relaxed text-amber-800 dark:text-amber-200">
+                <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                <span>{s.issue}</span>
+              </div>
+            )}
+
             {/* ------------------------------ Error ------------------------------ */}
             {s.phase === "error" && (
               <div className="space-y-3">
@@ -402,6 +414,9 @@ export function SyncPanel() {
           ))}
         </Card>
 
+        <ConnectionTestCard />
+        <RelayCard />
+
         <Card className="p-4 sm:p-5">
           <div className="flex items-center gap-3">
             <IconTile icon={Lock} tone="slate" size="sm" />
@@ -428,11 +443,152 @@ export function SyncPanel() {
           <div className="text-sm font-bold">Trouble connecting?</div>
           <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted">
             <li>• Put both devices on the same Wi‑Fi network (not a guest network) and turn off VPNs.</li>
-            <li>• If it keeps reconnecting, turn off “AP / client isolation” on the router, or switch off Local network only so the encrypted relay can help.</li>
+            <li>• Run the connection test on both devices — it shows exactly which step is blocked.</li>
+            <li>• If devices find each other but can't connect, the router may block device-to-device traffic (“AP / client isolation”). Turn it off, or add a relay under Advanced connection.</li>
             <li>• Keep VocaBera open on both screens while syncing — you can move between tabs freely.</li>
           </ul>
         </Card>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------ Connection test ------------------------------ */
+
+const CHECK_ICON: Record<CheckResult["status"], { icon: IconType; cls: string }> = {
+  ok: { icon: CircleCheck, cls: "text-emerald-500" },
+  warn: { icon: TriangleAlert, cls: "text-amber-500" },
+  fail: { icon: CircleX, cls: "text-rose-500" },
+  skip: { icon: CircleMinus, cls: "text-slate-400" },
+};
+
+function ConnectionTestCard() {
+  const s = useLiveSync();
+  const [report, setReport] = useState<NetworkReport | null>(null);
+  const [running, setRunning] = useState(false);
+
+  const run = async () => {
+    setRunning(true);
+    try {
+      setReport(await s.checkNetwork());
+    } catch {
+      toast.error("The connection test couldn't run");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 sm:p-5">
+      <div className="flex items-center gap-3">
+        <IconTile icon={Activity} tone="sky" size="sm" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold">Connection test</div>
+          <div className="text-xs leading-relaxed text-muted">Checks what this network allows. Run it on both devices.</div>
+        </div>
+        <Button size="sm" variant="soft" loading={running} onClick={() => void run()}>
+          {report ? "Run again" : "Run test"}
+        </Button>
+      </div>
+      {report && (
+        <div className="mt-3 space-y-1.5">
+          {report.results.map((r) => {
+            const meta = CHECK_ICON[r.status];
+            return (
+              <div key={r.id} className="flex items-start gap-2.5 rounded-2xl bg-black/[0.03] px-3 py-2.5 dark:bg-white/[0.04]">
+                <meta.icon className={cn("mt-0.5 size-4 shrink-0", meta.cls)} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2 text-[13px] font-bold">
+                    <span>{r.title}</span>
+                    {typeof r.ms === "number" && <span className="text-[11px] font-semibold tabular-nums text-muted">{r.ms} ms</span>}
+                  </div>
+                  <div className="text-xs leading-relaxed text-muted">{r.detail}</div>
+                </div>
+              </div>
+            );
+          })}
+          <p className="rounded-2xl bg-brand-500/10 px-3 py-2.5 text-[12.5px] font-semibold leading-relaxed text-brand-800 dark:text-brand-200">{report.verdict}</p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* --------------------------------- Relay (TURN) --------------------------------- */
+
+function RelayCard() {
+  const s = useLiveSync();
+  const [saved] = useState(() => s.customRelay());
+  const [open, setOpen] = useState(!!saved);
+  const [urls, setUrls] = useState(saved?.urls ?? "");
+  const [username, setUsername] = useState(saved?.username ?? "");
+  const [credential, setCredential] = useState(saved?.credential ?? "");
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    const list = urls.split(",").map((u) => u.trim()).filter(Boolean);
+    if (!list.length || list.some((u) => !/^turns?:/i.test(u))) {
+      toast.error("Relay addresses start with turn: or turns:");
+      return;
+    }
+    setBusy(true);
+    await s.setCustomRelay({ urls: list.join(", "), username: username.trim(), credential });
+    setBusy(false);
+    toast.success("Relay saved", { description: "It's used from the next connection. Run the connection test to check it." });
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    await s.setCustomRelay(null);
+    setBusy(false);
+    setUrls("");
+    setUsername("");
+    setCredential("");
+    toast.message("Relay removed");
+  };
+
+  return (
+    <Card className="p-4 sm:p-5">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-3 text-left" aria-expanded={open}>
+        <IconTile icon={KeyRound} tone="violet" size="sm" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold">Advanced connection</div>
+          <div className="text-xs leading-relaxed text-muted">
+            {s.relay ? "A relay is set up — sync connects even on strict Wi‑Fi." : "Optional relay (TURN) for Wi‑Fi that blocks device-to-device traffic."}
+          </div>
+        </div>
+        <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", s.relay ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300" : "bg-black/[0.05] text-muted dark:bg-white/[0.06]")}>
+          {s.relay ? "On" : "Off"}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-4 space-y-3">
+          <p className="text-xs leading-relaxed text-muted">
+            Create a free relay (for example Metered Open Relay or Cloudflare Realtime) and paste its details here. Use the same relay on both devices. Your data stays end-to-end encrypted.
+          </p>
+          <Field label="Relay address" hint="e.g. turn:global.relay.metered.ca:80, turns:global.relay.metered.ca:443?transport=tcp">
+            <input value={urls} onChange={(e) => setUrls(e.target.value)} placeholder="turn:host:3478" autoComplete="off" spellCheck={false} className={cn(inputCls, "font-mono text-[13px]")} />
+          </Field>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Username">
+              <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" spellCheck={false} className={inputCls} />
+            </Field>
+            <Field label="Password">
+              <input type="password" value={credential} onChange={(e) => setCredential(e.target.value)} autoComplete="off" className={inputCls} />
+            </Field>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" loading={busy} onClick={() => void save()}>
+              Save relay
+            </Button>
+            {saved || urls ? (
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void remove()}>
+                Remove
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }

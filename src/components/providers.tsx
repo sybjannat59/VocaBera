@@ -8,7 +8,7 @@ import { SettingsProvider, useSettings } from "@/lib/settings";
 import { LiveSyncProvider } from "@/lib/live-sync";
 import { PwaProvider } from "@/lib/pwa";
 import { VocabProvider, WordSheetProvider } from "@/lib/store";
-import { Button, IconTile, inputCls, type IconType } from "./ui";
+import { Button, IconTile, PresenceLayer, inputCls, type IconType } from "./ui";
 
 interface ConfirmOptions {
   title: string;
@@ -66,7 +66,7 @@ function ConfirmProvider({ children }: { children: ReactNode }) {
       {children}
       <AnimatePresence>
         {state && (
-          <div key="confirm" className="fixed inset-0 z-[80] grid place-items-center p-5">
+          <PresenceLayer key="confirm" className="fixed inset-0 z-[80] grid place-items-center p-5">
             <motion.div
               className="absolute inset-0 bg-slate-950/50"
               initial={{ opacity: 0 }}
@@ -110,7 +110,7 @@ function ConfirmProvider({ children }: { children: ReactNode }) {
                 </Button>
               </div>
             </motion.div>
-          </div>
+          </PresenceLayer>
         )}
       </AnimatePresence>
     </ConfirmCtx.Provider>

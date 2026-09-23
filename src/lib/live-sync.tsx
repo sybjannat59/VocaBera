@@ -1,11 +1,13 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
-import { SyncEngine, type SyncState } from "./peer-engine";
+import { runNetworkCheck, type NetworkReport } from "./net-check";
+import { readCustomTurn, saveCustomTurn, SyncEngine, type CustomTurn, type SyncState } from "./peer-engine";
 import { useSettings } from "./settings";
 import { useVocab } from "./store";
 
-export type { LinkRoute, SyncDevice, SyncPhase, SyncRole } from "./peer-engine";
+export type { CustomTurn, LinkRoute, SyncDevice, SyncPhase, SyncRole } from "./peer-engine";
+export type { CheckResult, NetworkReport } from "./net-check";
 export { extractSyncCode } from "./peer-engine";
 
 interface SyncCtx extends SyncState {
@@ -22,6 +24,10 @@ interface SyncCtx extends SyncState {
   setLocalName: (name: string) => void;
   setAutoSync: (on: boolean) => void;
   setLocalOnly: (on: boolean) => void;
+  /** Runs the connection test (pairing service, local network, internet path, relay). */
+  checkNetwork: () => Promise<NetworkReport>;
+  customRelay: () => CustomTurn | null;
+  setCustomRelay: (value: CustomTurn | null) => Promise<void>;
 }
 
 const Ctx = createContext<SyncCtx | null>(null);
@@ -79,6 +85,12 @@ export function LiveSyncProvider({ children }: { children: ReactNode }) {
         if (on) engine.notifyLocalChange();
       },
       setLocalOnly: (on) => update({ syncLocalOnly: on }),
+      checkNetwork: async () => runNetworkCheck(settings.syncLocalOnly, await engine.loadRelays(true)),
+      customRelay: () => readCustomTurn(),
+      setCustomRelay: async (value) => {
+        saveCustomTurn(value);
+        await engine.loadRelays(true);
+      },
     }),
     [state, settings.autoSync, settings.syncLocalOnly, engine, update],
   );

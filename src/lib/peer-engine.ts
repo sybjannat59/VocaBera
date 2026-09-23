@@ -7,6 +7,7 @@ import type { BootstrapData } from "./types";
 
 export type SyncPhase = "idle" | "starting" | "waiting" | "connecting" | "connected" | "reconnecting" | "error";
 export type SyncRole = "host" | "guest";
+/** How the two devices are linked: same Wi‑Fi (host candidates), direct through the router, or relayed. */
 export type LinkRoute = "lan" | "direct" | "relay" | "unknown";
 
 export interface SyncDevice {
@@ -36,6 +37,10 @@ export interface SyncState {
   lastSyncAt: string | null;
   lastResult: string;
   signal: "online" | "offline";
+  /** Non-fatal problem worth explaining (e.g. the Wi‑Fi blocked a device). */
+  issue: string;
+  /** A TURN relay is configured (server or custom). */
+  relay: boolean;
 }
 
 export const IDLE_STATE: SyncState = {
@@ -51,6 +56,8 @@ export const IDLE_STATE: SyncState = {
   lastSyncAt: null,
   lastResult: "",
   signal: "online",
+  issue: "",
+  relay: false,
 };
 
 interface Link {
@@ -98,16 +105,50 @@ const MAX_BYTES = 48 * 1024 * 1024;
 const SESSION_KEY = "vb-sync-session";
 const NAME_KEY = "vb-device-name";
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
-const HEARTBEAT_MS = 5000;
-const DEAD_AFTER_MS = 20000;
+const HEARTBEAT_MS = 4000;
+const DEAD_AFTER_MS = 16000;
 const OPEN_TIMEOUT_MS = 20000;
 
+// Verified public STUN servers. (PeerJS's old free TURN relays no longer exist — a relay, when needed,
+// comes from /api/turn or from the user's own settings.)
 const DEFAULT_ICE: RTCIceServer[] = [
   { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
   { urls: "stun:stun.cloudflare.com:3478" },
-  // Free PeerJS relays: only used when a direct Wi‑Fi path is blocked (e.g. router client isolation).
-  { urls: ["turn:eu-0.turn.peerjs.com:3478", "turn:us-0.turn.peerjs.com:3478"], username: "peerjs", credential: "peerjsp" },
 ];
+const CUSTOM_TURN_KEY = "vb-turn";
+
+export interface CustomTurn {
+  urls: string;
+  username?: string;
+  credential?: string;
+}
+
+export function readCustomTurn(): CustomTurn | null {
+  try {
+    const raw = localStorage.getItem(CUSTOM_TURN_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as CustomTurn;
+    return typeof v.urls === "string" && /^turns?:/i.test(v.urls.trim()) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveCustomTurn(value: CustomTurn | null) {
+  try {
+    if (value) localStorage.setItem(CUSTOM_TURN_KEY, JSON.stringify(value));
+    else localStorage.removeItem(CUSTOM_TURN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function customTurnServer(): RTCIceServer | null {
+  const c = readCustomTurn();
+  if (!c) return null;
+  const urls = c.urls.split(",").map((u) => u.trim()).filter((u) => /^turns?:/i.test(u));
+  return urls.length ? { urls, username: c.username || undefined, credential: c.credential || undefined } : null;
+}
 
 /* ================================= Helpers ================================= */
 
@@ -185,7 +226,7 @@ function friendly(err: unknown): string {
     case "socket-closed":
     case "server-error":
     case "timeout":
-      return "Couldn't reach the pairing service. Check that this device is connected to the internet (VocaBera only uses a tiny handshake on the free PeerJS service).";
+      return "Couldn't reach the pairing service. Check that this device is connected to the internet (only a tiny handshake uses it).";
     case "browser-incompatible":
       return "This browser can't make peer-to-peer connections. Use Chrome, Edge, Safari, Samsung Internet or Firefox.";
     case "ssl-unavailable":
@@ -272,9 +313,9 @@ async function detectRoute(pc: RTCPeerConnection): Promise<{ route: LinkRoute; r
   return { route: lan ? "lan" : "direct", rtt };
 }
 
-function iceServers(localOnly: boolean): RTCIceServer[] {
-  if (localOnly) return []; // host candidates only: keep traffic inside your network
-  const servers = [...DEFAULT_ICE];
+function iceServers(localOnly: boolean, relays: RTCIceServer[] = []): RTCIceServer[] {
+  if (localOnly) return []; // host candidates only: traffic can never leave the local network
+  const servers = [...DEFAULT_ICE, ...relays];
   const turn = process.env.NEXT_PUBLIC_TURN_URL;
   if (turn) {
     servers.push({
@@ -287,11 +328,11 @@ function iceServers(localOnly: boolean): RTCIceServer[] {
 }
 
 /** PeerJS options. Uses the free PeerJS cloud by default; a self-hosted PeerServer can be set via env vars. */
-export function peerOptions(localOnly: boolean): PeerOptions {
+export function peerOptions(localOnly: boolean, relays: RTCIceServer[] = []): PeerOptions {
   const options: PeerOptions = {
     debug: 1,
     pingInterval: 5000,
-    config: { iceServers: iceServers(localOnly), iceCandidatePoolSize: 2, sdpSemantics: "unified-plan" },
+    config: { iceServers: iceServers(localOnly, relays), iceCandidatePoolSize: 2, sdpSemantics: "unified-plan" },
   };
   const host = process.env.NEXT_PUBLIC_PEER_HOST;
   if (host) {
@@ -353,7 +394,6 @@ export class SyncEngine {
   private everConnected = false;
   private attempt = 0;
   private signalAttempt = 0;
-  private signalLostAt = 0;
   private dialing = false;
   private reclaiming = false;
   private ending = false;
@@ -364,6 +404,9 @@ export class SyncEngine {
   private changeTimer?: ReturnType<typeof setTimeout>;
   private signalTimer?: ReturnType<typeof setTimeout>;
   private wakeLock: WakeLockSentinel | null = null;
+  private relays: RTCIceServer[] = [];
+  private relaysAt = 0;
+  private blockedAttempts = 0;
 
   /* ----------------------------- external store ----------------------------- */
 
@@ -441,6 +484,31 @@ export class SyncEngine {
     this.set({ localName: value });
   }
 
+  /** Relay servers: from /api/turn (server env) plus the user's own relay. Cached for 10 minutes. */
+  async loadRelays(force = false) {
+    if (!force && this.relaysAt && Date.now() - this.relaysAt < 10 * 60_000) return this.relays;
+    const servers: RTCIceServer[] = [];
+    try {
+      const res = await fetch("/api/turn", { cache: "no-store", signal: AbortSignal.timeout(3500) });
+      if (res.ok) {
+        const data = (await res.json()) as { iceServers?: RTCIceServer[] };
+        if (Array.isArray(data.iceServers)) servers.push(...data.iceServers);
+      }
+    } catch {
+      /* optional */
+    }
+    const custom = customTurnServer();
+    if (custom) servers.push(custom);
+    this.relays = servers;
+    this.relaysAt = Date.now();
+    this.set({ relay: servers.length > 0 || !!process.env.NEXT_PUBLIC_TURN_URL });
+    return servers;
+  }
+
+  getRelays() {
+    return this.relays;
+  }
+
   /* --------------------------------- public API --------------------------------- */
 
   async createRoom(name?: string) {
@@ -451,7 +519,10 @@ export class SyncEngine {
     this.session = null;
     this.everConnected = false;
     this.attempt = 0;
-    this.set({ phase: "starting", role: "host", code: "", joinLink: "", devices: [], error: "", attempt: 0, transfer: null });
+    this.blockedAttempts = 0;
+    this.set({ phase: "starting", role: "host", code: "", joinLink: "", devices: [], error: "", issue: "", attempt: 0, transfer: null });
+    await this.loadRelays();
+    if (op !== this.op) return;
     for (let i = 0; i < 6; i++) {
       const code = randomCode();
       try {
@@ -490,6 +561,7 @@ export class SyncEngine {
     this.session = { role: "guest", code };
     this.everConnected = resume;
     this.attempt = 0;
+    this.blockedAttempts = 0;
     this.saveSession();
     this.set({
       phase: resume ? "reconnecting" : "connecting",
@@ -498,11 +570,13 @@ export class SyncEngine {
       joinLink: joinLinkFor(code),
       devices: [],
       error: "",
+      issue: "",
       attempt: 0,
       transfer: null,
     });
     this.startHeartbeat();
     void this.acquireWakeLock();
+    await this.loadRelays();
     await this.dial();
   }
 
@@ -548,20 +622,20 @@ export class SyncEngine {
     toast.message("Asking for the latest data…");
   }
 
-  /** Called whenever local health data changes (debounced). Only differing data fires. */
+  /** Called whenever local data changes (debounced). Only differing data is sent. */
   notifyLocalChange() {
     if (!this.autoSync || !this.session || this.openLinkList().length === 0) return;
     clearTimeout(this.changeTimer);
     this.changeTimer = setTimeout(() => {
       for (const link of this.openLinkList()) if (link.helloed) void this.enqueueSync(link, { auto: true });
-    }, 1500);
+    }, 1200);
   }
 
   /* ------------------------------ peer management ------------------------------ */
 
   private async openPeer(id?: string): Promise<Peer> {
     const { Peer: PeerCtor } = await import("peerjs");
-    const options = peerOptions(this.localOnly);
+    const options = peerOptions(this.localOnly, this.relays);
     return new Promise<Peer>((resolve, reject) => {
       let settled = false;
       const peer = id ? new PeerCtor(id, options) : new PeerCtor(options);
@@ -577,7 +651,7 @@ export class SyncEngine {
             peer.destroy();
             reject(Object.assign(new Error("timeout"), { type: "timeout" }));
           }),
-        20000,
+        15000,
       );
       peer.on("open", () => finish(() => resolve(peer)));
       peer.on("error", (err) =>
@@ -597,7 +671,6 @@ export class SyncEngine {
     peer.on("open", () => {
       if (peer !== this.peer) return;
       this.signalAttempt = 0;
-      this.signalLostAt = 0;
       this.set({ signal: "online" });
     });
     peer.on("error", (err) => this.onPeerError(peer, err));
@@ -623,23 +696,17 @@ export class SyncEngine {
     if (type === "peer-unavailable") {
       if (s?.role !== "guest") return;
       for (const link of [...this.links.values()]) if (!link.conn.open) this.dropLink(link);
-      // The host may be restarting (reloaded page) or still bonding. Keep trying a while.
-      if (this.everConnected || this.attempt < 8) {
-        this.scheduleReconnect();
-        return;
+      // The host may be restarting (reloaded page); retry a few times before giving up.
+      if (this.everConnected || this.attempt < 2) this.scheduleReconnect();
+      else {
+        this.retryInfo = { role: "guest", code: s.code };
+        this.fail(`No device is showing code ${s.code}. Check the code, and keep the Create room screen open on the other device.`);
       }
-      this.retryInfo = { role: "guest", code: s.code };
-      this.fail(
-        `No device is showing code ${s.code}. Make sure the other device is on Manage → Sync → Create room, that both are on the same Wi‑Fi (not guest Wi‑Fi), and that VPN is off.`,
-      );
       return;
     }
     if (["network", "socket-error", "socket-closed", "server-error", "disconnected"].includes(type)) {
-      // Annoying socket-level flakiness: don’t tear down the peer connection yet.
       this.set({ signal: "offline" });
-      this.signalLostAt = Date.now();
-      this.scheduleSignalReconnect();
-      return;
+      return; // "disconnected" follows and triggers a signaling reconnect
     }
     if (["browser-incompatible", "ssl-unavailable", "invalid-key"].includes(type)) {
       this.retryInfo = s ?? this.retryInfo;
@@ -653,27 +720,21 @@ export class SyncEngine {
   private onSignalLost(peer: Peer) {
     if (peer !== this.peer || !this.session || this.ending) return;
     this.set({ signal: "offline" });
-    this.signalLostAt = Date.now();
-    this.scheduleSignalReconnect();
-  }
-
-  private scheduleSignalReconnect() {
     clearTimeout(this.signalTimer);
-    const delay = Math.min(20000, 1000 * 2 ** Math.min(this.signalAttempt++, 4));
+    const delay = Math.min(15000, 1000 * 2 ** Math.min(this.signalAttempt++, 4));
     this.signalTimer = setTimeout(() => {
-      if (!this.session) return;
-      const peer = this.peer;
-      if (peer?.destroyed) {
+      if (peer !== this.peer || !this.session) return;
+      if (peer.destroyed) {
         this.peer = null;
         if (this.session.role === "host") void this.reclaimHost();
         else void this.dial();
-      } else if (peer?.disconnected) {
+      } else if (peer.disconnected) {
         try {
           peer.reconnect();
         } catch (e) {
           console.warn("[VocaBera sync] signaling reconnect failed", e);
         }
-      } else this.set({ signal: "online" });
+      }
     }, delay);
   }
 
@@ -681,9 +742,10 @@ export class SyncEngine {
     this.teardown();
     this.session = { role: "host", code };
     this.everConnected = false;
-    this.set({ phase: "reconnecting", role: "host", code, joinLink: joinLinkFor(code), devices: [], error: "", attempt: 0 });
+    this.set({ phase: "reconnecting", role: "host", code, joinLink: joinLinkFor(code), devices: [], error: "", issue: "", attempt: 0 });
     this.startHeartbeat();
     void this.acquireWakeLock();
+    await this.loadRelays();
     await this.reclaimHost();
   }
 
@@ -709,7 +771,7 @@ export class SyncEngine {
         } catch (err) {
           if (op !== this.op || this.session !== s) return;
           this.set({ phase: "reconnecting", attempt: i + 1, signal: errType(err) === "unavailable-id" ? "online" : "offline" });
-          await sleep(errType(err) === "unavailable-id" ? 2500 : Math.min(15000, 1500 * (i + 1)));
+          await sleep(errType(err) === "unavailable-id" ? 2500 : Math.min(12000, 1500 * (i + 1)));
         }
       }
       this.retryInfo = { role: "host", code: "" };
@@ -737,7 +799,7 @@ export class SyncEngine {
         this.bindPeer(peer);
       } else if (peer.disconnected) {
         peer.reconnect();
-        await waitForPeerOpen(peer, 12000);
+        await waitForPeerOpen(peer, 10000);
         if (op !== this.op) return;
       }
       for (const link of [...this.links.values()]) if (!link.conn.open) this.dropLink(link);
@@ -750,7 +812,7 @@ export class SyncEngine {
     } catch (err) {
       if (op !== this.op) return;
       const type = errType(err);
-      if (!this.everConnected && (["browser-incompatible", "ssl-unavailable", "invalid-key"].includes(type) || this.attempt >= 3)) {
+      if (!this.everConnected && (["browser-incompatible", "ssl-unavailable", "invalid-key"].includes(type) || this.attempt >= 2)) {
         this.retryInfo = { role: "guest", code: s.code };
         this.fail(friendly(err));
       } else this.scheduleReconnect();
@@ -763,12 +825,12 @@ export class SyncEngine {
     const s = this.session;
     if (!s || s.role !== "guest" || this.ending || this.reconnectTimer || this.openLinkList().length > 0) return;
     const n = this.attempt++;
-    if (n >= 80) {
+    if (n >= 60) {
       this.retryInfo = { role: "guest", code: s.code };
-      this.fail("Lost contact with the other device. Make sure it's still on the Sync screen on the same Wi‑Fi, then tap Try again.");
+      this.fail("Lost contact with the other device. Make sure it's still on the Sync screen and on the same Wi‑Fi, then tap Try again.");
       return;
     }
-    const base = Math.min(15000, 1000 * 2 ** Math.min(n, 4));
+    const base = Math.min(12000, 1000 * 2 ** Math.min(n, 4));
     const delay = document.visibilityState === "hidden" ? base * 2 : base;
     this.set({ phase: this.everConnected ? "reconnecting" : "connecting", attempt: n + 1 });
     this.reconnectTimer = setTimeout(() => {
@@ -835,8 +897,9 @@ export class SyncEngine {
     link.lastSeen = Date.now();
     this.everConnected = true;
     this.attempt = 0;
+    this.blockedAttempts = 0;
     this.send(link, { t: "hello", v: PROTOCOL, name: this.state.localName, deviceId: this.deviceId, gzip: canGzip(), role: s.role });
-    this.set({ phase: "connected", error: "", attempt: 0 });
+    this.set({ phase: "connected", error: "", issue: "", attempt: 0 });
     this.refreshDevices();
     setTimeout(() => void this.probeRoute(link), 1500);
   }
@@ -1120,10 +1183,9 @@ export class SyncEngine {
     const now = Date.now();
     for (const link of [...this.links.values()]) {
       if (!link.conn.open) {
-        if (!link.since && now - link.created > OPEN_TIMEOUT_MS) {
-          this.dropLink(link);
-          if (this.session.role === "guest") this.scheduleReconnect();
-        }
+        const pc = link.conn.peerConnection as RTCPeerConnection | undefined;
+        const failed = pc?.iceConnectionState === "failed" || pc?.connectionState === "failed";
+        if (!link.since && (failed || now - link.created > OPEN_TIMEOUT_MS)) this.onBlocked(link);
         continue;
       }
       this.send(link, { t: "ping", at: now });
@@ -1133,11 +1195,34 @@ export class SyncEngine {
       }
     }
     this.beats++;
-    if (this.beats % 2 === 0) for (const link of this.openLinkList()) void this.probeRoute(link);
-    if (this.beats % 3 === 0) this.saveSession();
+    if (this.beats % 3 === 0) for (const link of this.openLinkList()) void this.probeRoute(link);
+    if (this.beats % 5 === 0) this.saveSession();
     if (this.session?.role === "guest" && this.links.size === 0 && !this.reconnectTimer && !this.dialing && this.state.phase !== "error") {
       this.scheduleReconnect();
     }
+  }
+
+  /** The devices found each other through the pairing service, but no network path worked. */
+  private onBlocked(link: Link) {
+    this.dropLink(link);
+    const s = this.session;
+    if (!s) return;
+    this.blockedAttempts++;
+    const hasRelay = this.relays.length > 0 && !this.localOnly;
+    const advice = hasRelay
+      ? "The relay couldn't connect either — check the relay settings, or try another Wi‑Fi."
+      : "Your Wi‑Fi may block devices from talking to each other (client/AP isolation, guest network or VPN). Scan the QR code instead of typing, or add a free relay under Advanced connection.";
+    if (s.role === "host") {
+      this.set({ issue: `A device tried to join but couldn't connect. ${advice}` });
+      return;
+    }
+    if (!this.everConnected && this.blockedAttempts >= 2) {
+      this.retryInfo = { role: "guest", code: s.code };
+      this.fail(`Found the other device, but couldn't open a connection to it. ${advice}`);
+      return;
+    }
+    this.set({ issue: this.everConnected ? "Connection interrupted — reconnecting…" : "Still trying to reach the other device…" });
+    this.scheduleReconnect();
   }
 
   private onVisible = () => {

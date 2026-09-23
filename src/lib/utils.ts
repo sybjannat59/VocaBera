@@ -1,3 +1,5 @@
+import { prefs } from "./prefs";
+import { speakText } from "./tts";
 import type { Word } from "./types";
 
 export function cn(...classes: (string | false | null | undefined)[]) {
@@ -68,23 +70,11 @@ export function findWordInSentence(sentence: string, word: string) {
 
 /* ------------------------- Speech, sound & haptics ------------------------ */
 
-export const prefs = { lang: "en-US", rate: 0.95, sound: true, haptics: true };
+export { prefs };
 
+/** Speaks text with the best engine available (real recording → AI voice → device voice). */
 export function speak(text: string, rate?: number) {
-  if (typeof window === "undefined" || !("speechSynthesis" in window) || !text) return false;
-  const synth = window.speechSynthesis;
-  synth.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = prefs.lang;
-  u.rate = rate ?? prefs.rate;
-  const voices = synth.getVoices();
-  const voice =
-    voices.find((v) => v.lang === prefs.lang && /natural|premium|enhanced|google|samantha|daniel|aria|jenny/i.test(v.name)) ??
-    voices.find((v) => v.lang === prefs.lang) ??
-    voices.find((v) => v.lang.startsWith("en"));
-  if (voice) u.voice = voice;
-  synth.speak(u);
-  return true;
+  return speakText(text, { rate });
 }
 
 let audioCtx: AudioContext | null = null;

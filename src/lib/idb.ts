@@ -74,9 +74,11 @@ export function openDb(): Promise<IDBDatabase> {
         db.close();
         dbPromise = null;
       };
+      window.dispatchEvent(new Event("vb:db-ready"));
       resolve(db);
     };
-    request.onblocked = () => console.warn("VocaBera: close other VocaBera tabs to finish updating the local database.");
+    // Another tab with an older version still holds the database: tell the user instead of hanging.
+    request.onblocked = () => window.dispatchEvent(new Event("vb:db-blocked"));
     request.onerror = () => {
       dbPromise = null;
       reject(request.error || new Error("Failed to open IndexedDB"));
