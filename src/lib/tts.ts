@@ -335,7 +335,13 @@ function pickRecording(recs: Recording[]) {
 
 /** Warm the cache so the next tap plays instantly. */
 export function prefetchPronunciation(word: string) {
-  if (!isBrowser() || !prefs.recordings || prefs.engine === "device" || !isWordLike(word) || !navigator.onLine) return;
+  if (!isBrowser() || prefs.engine === "device" || !isWordLike(word)) return;
+  if (prefs.wordEngine === "studio" && (studio.get().status === "ready" || studioInstalled())) {
+    const speed = Math.min(1.5, Math.max(0.65, prefs.rate + 0.05));
+    void studioAudio(word.trim(), speed).catch(() => undefined);
+    return;
+  }
+  if (!prefs.recordings || !navigator.onLine) return;
   void resolveRecordings(word);
 }
 
@@ -470,6 +476,7 @@ let worker: Worker | null = null;
 let reqId = 0;
 const pending = new Map<number, { resolve: (v: { pcm: Float32Array; rate: number }) => void; reject: (e: Error) => void }>();
 const studioAudioCache = new Map<string, { pcm: Float32Array; rate: number }>();
+const studioAudioInflight = new Map<string, Promise<{ pcm: Float32Array; rate: number }>>();
 
 /** Optional custom model hosts, e.g. localStorage["vb-model-hosts"] = '["https://my-mirror.example/"]'. */
 function modelHosts(): string[] | undefined {
@@ -558,17 +565,28 @@ function studioGenerate(text: string, speed: number) {
   });
 }
 
+function studioAudio(text: string, speed: number) {
+  const cacheKey = `${prefs.studioVoice}:${speed}:${text}`;
+  const cached = studioAudioCache.get(cacheKey);
+  if (cached) return Promise.resolve(cached);
+  const inflight = studioAudioInflight.get(cacheKey);
+  if (inflight) return inflight;
+  const job = studioGenerate(text, speed)
+    .then((out) => {
+      if (studioAudioCache.size >= 100) studioAudioCache.delete(studioAudioCache.keys().next().value as string);
+      studioAudioCache.set(cacheKey, out);
+      return out;
+    })
+    .finally(() => studioAudioInflight.delete(cacheKey));
+  studioAudioInflight.set(cacheKey, job);
+  return job;
+}
+
 async function speakStudio(text: string, rate: number, token: number) {
   if (!(studio.get().status === "ready" || studioInstalled())) throw new Error("AI voice is not installed");
   if (studio.get().status !== "ready") loadStudioVoice();
   const speed = Math.min(1.5, Math.max(0.65, rate + 0.05));
-  const cacheKey = `${prefs.studioVoice}:${speed}:${text}`;
-  let out = studioAudioCache.get(cacheKey);
-  if (!out) {
-    out = await studioGenerate(text, speed);
-    if (studioAudioCache.size >= 100) studioAudioCache.delete(studioAudioCache.keys().next().value as string);
-    studioAudioCache.set(cacheKey, out);
-  }
+  const out = await studioAudio(text, speed);
   if (token !== playToken) return;
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = URL.createObjectURL(pcmToWav(out.pcm, out.rate));

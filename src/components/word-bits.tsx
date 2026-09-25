@@ -298,7 +298,6 @@ function WordDetail({ w, onClose }: { w: Word; onClose: () => void }) {
     };
   }, [w.id, w.timesReviewed]);
   const hasParts = !!(w.prefix || w.rootWord || w.suffix);
-  useEffect(() => prefetchPronunciation(w.word), [w.word]);
 
   const copy = async () => {
     const text = [
