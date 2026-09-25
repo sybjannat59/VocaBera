@@ -19,7 +19,7 @@ import {
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { FavoriteButton, Highlight, SpeakButton, WordPartsView } from "@/components/word-bits";
+import { FavoriteButton, Highlight, PronounceChip, SpeakButton, WordPartsView } from "@/components/word-bits";
 import {
   Button,
   Card,
@@ -290,9 +290,7 @@ function CardBack({ w }: { w: Word }) {
           <div className="flex flex-wrap gap-1.5">
             <span className="mr-1 self-center text-[11px] font-bold uppercase tracking-wider text-muted">Syn</span>
             {w.synonyms.map((s) => (
-              <span key={s} className="rounded-full bg-emerald-500/12 px-2.5 py-1 text-[12.5px] font-semibold text-emerald-700 dark:text-emerald-300">
-                {s}
-              </span>
+              <PronounceChip key={s} text={s} tone="emerald" />
             ))}
           </div>
         )}
@@ -300,9 +298,7 @@ function CardBack({ w }: { w: Word }) {
           <div className="flex flex-wrap gap-1.5">
             <span className="mr-1 self-center text-[11px] font-bold uppercase tracking-wider text-muted">Ant</span>
             {w.antonyms.map((s) => (
-              <span key={s} className="rounded-full bg-rose-500/12 px-2.5 py-1 text-[12.5px] font-semibold text-rose-700 dark:text-rose-300">
-                {s}
-              </span>
+              <PronounceChip key={s} text={s} tone="rose" />
             ))}
           </div>
         )}

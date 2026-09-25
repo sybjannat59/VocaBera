@@ -67,6 +67,38 @@ export function SpeakButton({ text, size = "md", className }: { text: string; si
   );
 }
 
+export function PronounceChip({ text, tone }: { text: string; tone: "emerald" | "rose" }) {
+  const speech = useSyncExternalStore(subscribeSpeech, getSpeechState, getServerSpeechState);
+  const mine = speech.text === text.trim() && speech.status !== "idle";
+  const loading = mine && speech.status === "loading";
+  const base = tone === "emerald" ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300";
+  const active = tone === "emerald" ? "bg-emerald-500/25 ring-emerald-500/60 shadow-emerald-500/20" : "bg-rose-500/25 ring-rose-500/60 shadow-rose-500/20";
+  return (
+    <button
+      type="button"
+      aria-label={mine ? `Stop pronouncing ${text}` : `Pronounce ${text}`}
+      aria-pressed={mine}
+      title={mine && speech.label ? speech.label : `Pronounce ${text}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (mine) {
+          stopSpeech();
+          return;
+        }
+        if (!speak(text)) toast.error("Speech isn't supported in this browser");
+      }}
+      className={cn(
+        "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-semibold shadow-sm ring-1 transition duration-200 active:scale-95",
+        base,
+        mine ? cn(active, "scale-[1.04] ring-2") : tone === "emerald" ? "bg-emerald-500/12 ring-emerald-500/20 hover:bg-emerald-500/20 hover:ring-emerald-500/40" : "bg-rose-500/12 ring-rose-500/20 hover:bg-rose-500/20 hover:ring-rose-500/40",
+      )}
+    >
+      {loading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Volume2 className={cn("size-3.5", mine && "animate-pulse")} />}
+      {text}
+    </button>
+  );
+}
+
 export function FavoriteButton({
   id,
   active,
@@ -238,28 +270,14 @@ function Section({ icon, tone, title, children }: { icon: IconType; tone: Tone; 
 function RelationChips({
   items,
   tone,
-  lookup,
-  onOpen,
 }: {
   items: string[];
   tone: "emerald" | "rose";
-  lookup: Map<string, number>;
-  onOpen: (id: number) => void;
 }) {
-  const cls = tone === "emerald" ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300" : "bg-rose-500/12 text-rose-700 dark:text-rose-300";
   return (
     <div className="flex flex-wrap gap-1.5">
       {items.map((s) => {
-        const id = lookup.get(s.toLowerCase());
-        return id ? (
-          <button key={s} type="button" onClick={() => onOpen(id)} className={cn("h-8 rounded-full px-3 text-[13px] font-semibold underline decoration-dotted underline-offset-4", cls)}>
-            {s}
-          </button>
-        ) : (
-          <span key={s} className={cn("inline-flex h-8 items-center rounded-full px-3 text-[13px] font-semibold", cls)}>
-            {s}
-          </span>
-        );
+        return <PronounceChip key={s} text={s} tone={tone} />;
       })}
     </div>
   );
@@ -267,10 +285,8 @@ function RelationChips({
 
 function WordDetail({ w, onClose }: { w: Word; onClose: () => void }) {
   const { words, deleteWord } = useVocab();
-  const { openWord } = useWordSheet();
   const confirm = useConfirm();
   const router = useRouter();
-  const lookup = useMemo(() => new Map(words.map((x) => [x.word.toLowerCase(), x.id])), [words]);
   const acc = accuracyOf(w);
   const [history, setHistory] = useState<WordHistoryItem[] | null>(null);
   useEffect(() => {
@@ -380,12 +396,12 @@ function WordDetail({ w, onClose }: { w: Word; onClose: () => void }) {
           <div className="grid gap-3 sm:grid-cols-2">
             {w.synonyms.length > 0 && (
               <Section icon={Link2} tone="teal" title="Synonyms">
-                <RelationChips items={w.synonyms} tone="emerald" lookup={lookup} onOpen={openWord} />
+                <RelationChips items={w.synonyms} tone="emerald" />
               </Section>
             )}
             {w.antonyms.length > 0 && (
               <Section icon={Split} tone="rose" title="Antonyms">
-                <RelationChips items={w.antonyms} tone="rose" lookup={lookup} onOpen={openWord} />
+                <RelationChips items={w.antonyms} tone="rose" />
               </Section>
             )}
           </div>
