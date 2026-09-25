@@ -231,18 +231,6 @@ export function makeQuestion(type: QuestionType, w: Word, pool: Word[]): Questio
       const d = relationDistractors(w, pool, rel);
       const noun = type === "synonym" ? "synonym" : "antonym";
       const note = `${type === "synonym" ? "Synonyms" : "Antonyms"} of ${w.word}: ${list.join(", ")}`;
-      if (list.length >= 3 && d.length >= 1 && Math.random() < 0.35) {
-        const odd = d[0];
-        return {
-          ...base,
-          label: "Odd one out",
-          prompt: `Which word is NOT ${type === "synonym" ? "a synonym" : "an antonym"} of`,
-          focus: w.word,
-          options: shuffle([odd, ...shuffle(list).slice(0, 3)]),
-          answer: odd,
-          note,
-        };
-      }
       if (d.length < 2) return null;
       const correct = shuffle(list)[0];
       return {
@@ -414,5 +402,5 @@ export function grade(q: Question, response: string): { correct: boolean; typo: 
     const tol = b.length >= 9 ? 2 : b.length >= 5 ? 1 : 0;
     return levenshtein(a, b) <= tol ? { correct: true, typo: true } : { correct: false, typo: false };
   }
-  return { correct: response === q.answer, typo: false };
+  return { correct: norm(response) === norm(q.answer), typo: false };
 }
