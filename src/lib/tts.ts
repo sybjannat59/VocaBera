@@ -342,9 +342,19 @@ export function prefetchPronunciation(word: string) {
 /* ------------------------------ device voices ------------------------------ */
 
 let voicesCache: SpeechSynthesisVoice[] = [];
+let voicesListenerReady = false;
+
+function watchVoices() {
+  if (!isBrowser() || voicesListenerReady || !("speechSynthesis" in window)) return;
+  voicesListenerReady = true;
+  window.speechSynthesis.addEventListener("voiceschanged", () => {
+    voicesCache = window.speechSynthesis.getVoices();
+  });
+}
 
 function loadVoices(timeout = 1500): Promise<SpeechSynthesisVoice[]> {
   if (!isBrowser() || !("speechSynthesis" in window)) return Promise.resolve([]);
+  watchVoices();
   const now = window.speechSynthesis.getVoices();
   if (now.length) {
     voicesCache = now;
@@ -376,6 +386,8 @@ function scoreVoice(v: SpeechSynthesisVoice, lang: string) {
   const q = qualityOf(v);
   s += q === "natural" ? 45 : q === "enhanced" ? 25 : 0;
   if (!v.localService) s += 6;
+  const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  if (mobile) s += v.localService ? 28 : -12;
   if (v.default) s += 2;
   if (BAD_VOICE.test(v.name)) s -= 80;
   return s;
@@ -430,8 +442,9 @@ async function speakDevice(text: string, rate: number, token: number) {
       const u = new SpeechSynthesisUtterance(part);
       u.lang = voice?.lang ?? prefs.lang;
       if (voice) u.voice = voice;
-      u.rate = rate;
-      u.pitch = prefs.pitch;
+      u.rate = Math.min(1.5, Math.max(0.65, rate));
+      u.pitch = Math.min(1.2, Math.max(0.8, prefs.pitch));
+      u.volume = 1;
       const keepAlive = setInterval(() => {
         // Chrome (desktop) pauses long speech silently; nudging keeps it going.
         if (synth.speaking && !synth.paused) {
@@ -456,6 +469,7 @@ async function speakDevice(text: string, rate: number, token: number) {
 let worker: Worker | null = null;
 let reqId = 0;
 const pending = new Map<number, { resolve: (v: { pcm: Float32Array; rate: number }) => void; reject: (e: Error) => void }>();
+const studioAudioCache = new Map<string, { pcm: Float32Array; rate: number }>();
 
 /** Optional custom model hosts, e.g. localStorage["vb-model-hosts"] = '["https://my-mirror.example/"]'. */
 function modelHosts(): string[] | undefined {
@@ -519,6 +533,7 @@ export function loadStudioVoice() {
 export async function removeStudioVoice() {
   worker?.terminate();
   worker = null;
+  studioAudioCache.clear();
   try {
     localStorage.removeItem(STUDIO_FLAG);
     await caches.delete("transformers-cache");
@@ -541,6 +556,24 @@ function studioGenerate(text: string, speed: number) {
       }
     }, 45000);
   });
+}
+
+async function speakStudio(text: string, rate: number, token: number) {
+  if (!(studio.get().status === "ready" || studioInstalled())) throw new Error("AI voice is not installed");
+  if (studio.get().status !== "ready") loadStudioVoice();
+  const speed = Math.min(1.5, Math.max(0.65, rate + 0.05));
+  const cacheKey = `${prefs.studioVoice}:${speed}:${text}`;
+  let out = studioAudioCache.get(cacheKey);
+  if (!out) {
+    out = await studioGenerate(text, speed);
+    if (studioAudioCache.size >= 100) studioAudioCache.delete(studioAudioCache.keys().next().value as string);
+    studioAudioCache.set(cacheKey, out);
+  }
+  if (token !== playToken) return;
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  objectUrl = URL.createObjectURL(pcmToWav(out.pcm, out.rate));
+  speech.set({ status: "speaking", source: "studio", label: "AI voice" });
+  await playUrl(objectUrl, 1, token);
 }
 
 /* ---------------------------------- public API ---------------------------------- */
@@ -576,8 +609,21 @@ export function speakText(text: string, opts: { rate?: number } = {}): boolean {
 
   void (async () => {
     try {
+      const word = isWordLike(clean);
+      const aiWord = word && prefs.wordEngine === "studio" && prefs.engine !== "device";
+
+      // An explicit AI word choice must not be bypassed by online recordings.
+      if (aiWord) {
+        try {
+          await speakStudio(clean, opts.rate ?? prefs.rate, token);
+          return;
+        } catch {
+          /* fall through to recordings or the device voice */
+        }
+      }
+
       // 1. Real recording for single words (natural speed unless a slower rate was asked for).
-      if (prefs.recordings && prefs.engine !== "device" && isWordLike(clean) && navigator.onLine) {
+      if (prefs.recordings && !aiWord && prefs.engine !== "device" && word && navigator.onLine) {
         const recs = await Promise.race([resolveRecordings(clean), sleep(1600).then(() => null)]);
         if (token !== playToken) return;
         const rec = recs ? pickRecording(recs) : null;
@@ -594,13 +640,7 @@ export function speakText(text: string, opts: { rate?: number } = {}): boolean {
       // 2. On-device AI voice.
       if (prefs.engine === "studio" && (studio.get().status === "ready" || studioInstalled())) {
         try {
-          if (studio.get().status !== "ready") loadStudioVoice();
-          const out = await studioGenerate(clean, Math.min(1.3, Math.max(0.6, (opts.rate ?? prefs.rate) + 0.05)));
-          if (token !== playToken) return;
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
-          objectUrl = URL.createObjectURL(pcmToWav(out.pcm, out.rate));
-          speech.set({ status: "speaking", source: "studio", label: "AI voice" });
-          await playUrl(objectUrl, 1, token);
+          await speakStudio(clean, opts.rate ?? prefs.rate, token);
           return;
         } catch {
           /* fall through to the device voice */

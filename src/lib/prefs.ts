@@ -7,6 +7,7 @@ export const prefs = {
   haptics: true,
   /** natural = real recordings + best device voice · studio = on-device AI voice · device = device voice only */
   engine: "natural" as "natural" | "studio" | "device",
+  wordEngine: "natural" as "natural" | "studio",
   recordings: true,
   voiceURI: "",
   studioVoice: "af_heart",

@@ -192,6 +192,8 @@ export function MatchGame({ topSlot }: { topSlot?: ReactNode }) {
     { key: "due", label: "Due", count: stats.due },
     { key: "weak", label: "Weak", count: stats.weak },
     { key: "new", label: "New", count: stats.new },
+    { key: "learning", label: "Learning", count: stats.learning },
+    { key: "mastered", label: "Mastered", count: stats.mastered },
     { key: "favorites", label: "Favorites", count: stats.favorites },
   ];
 

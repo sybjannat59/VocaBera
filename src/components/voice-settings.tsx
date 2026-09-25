@@ -123,6 +123,23 @@ export function VoiceSettingsCard() {
       </div>
       <p className="mt-2 px-1 text-xs leading-relaxed text-muted">{ENGINES.find((e) => e.value === engine)?.text}</p>
 
+      {engine !== "device" && (
+        <div className="mt-4">
+          <div className="mb-2 px-1 text-[13px] font-semibold text-fg/80">Word pronunciation</div>
+          <Segmented<"natural" | "studio">
+            value={settings.ttsWordEngine}
+            onChange={(v) => update({ ttsWordEngine: v })}
+            options={[
+              { value: "natural", label: "Natural recording" },
+              { value: "studio", label: "AI voice" },
+            ]}
+          />
+          <p className="mt-2 px-1 text-xs leading-relaxed text-muted">
+            AI voice is clear and consistent across mobile browsers. Download AI Studio once to use it offline.
+          </p>
+        </div>
+      )}
+
       {engine === "studio" && (
         <div className="mt-4 rounded-[20px] bg-linear-to-br from-violet-500/10 to-brand-500/5 p-3.5 ring-1 ring-violet-500/15">
           <div className="flex items-center gap-3">
@@ -242,7 +259,7 @@ export function VoiceSettingsCard() {
           <input
             type="range"
             min={0.6}
-            max={1.3}
+            max={1.5}
             step={0.05}
             value={settings.speechRate}
             onChange={(e) => update({ speechRate: Number(e.target.value) })}

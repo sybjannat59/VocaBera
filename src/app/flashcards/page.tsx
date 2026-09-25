@@ -74,6 +74,8 @@ function FlashSetup({ initialDeck, onStart }: { initialDeck?: SourceKey; onStart
     { key: "due", label: "Due", count: stats.due },
     { key: "new", label: "New", count: stats.new },
     { key: "weak", label: "Weak", count: stats.weak },
+    { key: "learning", label: "Learning", count: stats.learning },
+    { key: "mastered", label: "Mastered", count: stats.mastered },
     { key: "favorites", label: "Favorites", count: stats.favorites },
     ...stats.tags.slice(0, 8).map((t) => ({ key: `tag:${t}` as SourceKey, label: `#${t}`, count: filterBySource(words, `tag:${t}`).length })),
   ];

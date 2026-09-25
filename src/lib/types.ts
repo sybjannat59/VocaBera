@@ -160,4 +160,4 @@ export const EMPTY_WORD_INPUT: WordInput = {
 
 export type WordStatus = "new" | "learning" | "reviewing" | "mastered";
 
-export type SourceKey = "all" | "due" | "weak" | "new" | "favorites" | `tag:${string}`;
+export type SourceKey = "all" | "due" | "weak" | "new" | "learning" | "mastered" | "favorites" | `tag:${string}`;

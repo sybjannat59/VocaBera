@@ -36,6 +36,7 @@ export interface Settings {
   syncLocalOnly: boolean;
   /** natural = real recordings + best device voice · studio = on-device AI voice · device = device voice only */
   ttsEngine: "natural" | "studio" | "device";
+  ttsWordEngine: "natural" | "studio";
   ttsRecordings: boolean;
   ttsVoiceURI: string;
   ttsStudioVoice: string;
@@ -80,6 +81,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoSync: true,
   syncLocalOnly: false,
   ttsEngine: "natural",
+  ttsWordEngine: "natural",
   ttsRecordings: true,
   ttsVoiceURI: "",
   ttsStudioVoice: "af_heart",
@@ -142,6 +144,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       sound: settings.sound,
       haptics: settings.haptics,
       engine: settings.ttsEngine,
+      wordEngine: settings.ttsWordEngine,
       recordings: settings.ttsRecordings,
       voiceURI: settings.ttsVoiceURI,
       studioVoice: settings.ttsStudioVoice,

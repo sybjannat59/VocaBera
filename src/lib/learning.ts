@@ -68,6 +68,8 @@ export function filterBySource(words: Word[], source: SourceKey, now = Date.now(
   if (source === "due") return words.filter((w) => isDue(w, now));
   if (source === "weak") return words.filter(isWeak);
   if (source === "new") return words.filter((w) => w.timesReviewed === 0);
+  if (source === "learning") return words.filter((w) => wordStatus(w) === "learning");
+  if (source === "mastered") return words.filter((w) => wordStatus(w) === "mastered");
   if (source === "favorites") return words.filter((w) => w.isFavorite);
   if (source.startsWith("tag:")) {
     const tag = source.slice(4).toLowerCase();
@@ -79,7 +81,7 @@ export function filterBySource(words: Word[], source: SourceKey, now = Date.now(
 export function sourceLabel(source: SourceKey) {
   if (source.startsWith("tag:")) return `#${source.slice(4)}`;
   return (
-    { all: "All words", due: "Due for review", weak: "Weak words", new: "New words", favorites: "Favorites" } as Record<
+    { all: "All words", due: "Due for review", weak: "Weak words", new: "New words", learning: "Learning", mastered: "Mastered", favorites: "Favorites" } as Record<
       string,
       string
     >
