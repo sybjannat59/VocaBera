@@ -88,12 +88,13 @@ export function PronounceChip({ text, tone }: { text: string; tone: "emerald" | 
         if (!speak(text)) toast.error("Speech isn't supported in this browser");
       }}
       className={cn(
-        "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-semibold shadow-sm ring-1 transition duration-200 active:scale-95",
+        "inline-flex h-8 items-center rounded-full px-3 text-[13px] font-semibold shadow-sm ring-1 transition duration-200 active:scale-95",
+        mine && "gap-1.5",
         base,
         mine ? cn(active, "scale-[1.04] ring-2") : tone === "emerald" ? "bg-emerald-500/12 ring-emerald-500/20 hover:bg-emerald-500/20 hover:ring-emerald-500/40" : "bg-rose-500/12 ring-rose-500/20 hover:bg-rose-500/20 hover:ring-rose-500/40",
       )}
     >
-      {loading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Volume2 className={cn("size-3.5", mine && "animate-pulse")} />}
+      {mine && (loading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Volume2 className="size-3.5 animate-pulse" />)}
       {text}
     </button>
   );
